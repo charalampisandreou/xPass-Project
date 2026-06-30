@@ -1,0 +1,48 @@
+# ==============================================================================
+# EXPECTED PASS (xPass) PROJECT HISTORY & DEVELOPMENT LOG
+# ==============================================================================
+
+## 1. DEVELOPER PROFILE & ROADMAP CONTEXT
+- Developer: 2nd-year Electrical and Computer Engineering (ECE) student at the National Technical University of Athens (NTUA).
+- Mathematical Background: Strong university-level foundation in linear algebra, trigonometry, matrix manipulation, and stochastic systems.
+- Python Proficiency: Early-stage / beginner. Actively building syntax muscle memory and learning core data manipulation frameworks.
+- Project Goal: Build a high-quality, CV-worthy Expected Pass (xPass) predictive machine learning model to serve as a signature portfolio piece for elite football analytics roles.
+- Timeline: Execution across a strict, 15–20 hours/week, 8-week developmental sprint.
+- Rule of Engagement: The "Rubber Duck" / Code Ownership Rule is strictly active. AI assistants are utilized exclusively as tutors to explain mechanics, provide boilerplate plumbing, or suggest abstract pseudocode. The core spatial, geometric, and mathematical feature engineering code must be written independently by the developer.
+
+---
+
+## 2. PROJECT ARCHITECTURE & TARGET BLUEPRINT
+The project architecture strictly replicates and expands upon the framework introduced by data consultant Marc Lamberts. It is structured into a localized 4-stage data pipeline:
+1. Data Ingestion & Tabular Flattening: Extracting deeply nested event streams from public repositories.
+2. Spatial & Temporal Feature Engineering: Building the core intellectual property using vector math, geometry, and sequential timestamp deltas.
+3. Machine Learning Optimization: Formatting binary targets, training a supervised classifier (Logistic Regression with regularization or XGBoost), and calibrating probabilities via Log Loss optimization.
+4. Tactical Visualization: Mapping continuous decimal outputs onto 2D publication-ready pitch visualizations using matplotlib and mplsoccer.
+
+---
+
+## 3. METHODOLOGY & MACHINE LEARNING FRAMEWORK
+- Core Mathematical Framework: The model treats pass completion as a Bernoulli event framework where every individual pass is a discrete conditional action yielding a binary outcome (1 = Completed, 0 = Incomplete/Intercepted).
+- The "Time-to-Execute" Temporal Innovation: Replicating Lamberts' blueprint, the model introduces a custom temporal delta feature. By calculating the chronological difference (in milliseconds) between a player's "Ball Receipt" event and their subsequent "Pass" release, the pipeline mathematically quantifies decision-making speed and pressure dynamics.
+- Advanced Spatial Features (The StatsBomb Freeze Frame Layer): To prevent the model from becoming generic, the architecture leverages StatsBomb's coordinate snapshots. Features include calculating Euclidean distances to goal, relative angles, proximity pressure vectors, and counting opposing defenders intersecting a custom geometric passing lane wedge.
+- Evaluation Metrics & Validation: The model's out-of-sample predictability will be rigorously evaluated using a match-based 80/20 train-test split (targeting ~160,000 training rows and ~40,000 hidden test rows). Success criteria will be mathematically measured using Brier Scores, Log Loss curves, and ROC AUC metrics.
+
+---
+
+## 4. SYSTEM WORKSPACE & INFRASTRUCTURE CONFIGURATION
+- Hardware Environment: Local computation sandbox running on a Lenovo Yoga 7 (AMD Ryzen 7 8840HS, 8-cores/16-threads, 16GB RAM). Training loops and pipelines execute 100% locally with zero cloud compute dependency.
+- Development Environment: Visual Studio Code natively integrated with Microsoft Python and Jupyter Notebook extensions.
+- Version Control Strategy: Local Git repository linked to a private cloud backup on GitHub. Standard color tracking and disciplined, descriptive commit logging habits are enforced to present an industry-standard engineering timeline.
+- Workspace State:
+  - Active Directory: C:\Users\xaral\dev\xPass-Project
+  - Active Project Notebook: week1_pandas_basics.ipynb
+  - Private Sandbox Environment: A local folder named `Pandas_basics/` has been explicitly isolated and hidden from version control tracking via strict trailing-slash additions in the `.gitignore` configuration.
+
+---
+
+## 5. CURRENT CURRENT PROGRESS & IMMEDIATE TASKS
+- Milestone Stage: Week 1 (Environment Setup & Pandas Core Architecture).
+- Status: The local programming environment, Git configurations, and repository tracking rules have been successfully finalized and synced. Initial data ingestion testing has been performed using the `requests` library to stream raw Champions League event data from StatsBomb's open repository.
+- Technical Hurdles Solved: Resolved initial library dependencies and mitigated nested parsing errors by transitioning square-bracket dictionary indexing (`x['name']`) to defensive, non-crashing data queries (`x.get('name')`).
+- Current Working Objective: Learning the execution of 2-dimensional DataFrame manipulation (Boolean Masking, vector operations, and row slicing).
+- Immediate Next Coding Task: Implementing custom row-filtering masks to solve scouting challenges on the match event spreadsheet before moving on to the multi-column lambda extraction functions (`.apply(lambda x: ...)`) required to isolate and pull the nested pass data structures out of the root DataFrame.

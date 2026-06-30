@@ -3,4 +3,5 @@ __pycache__/
 data/
 *.json
 # Ignore the practice workspace folder
-Pandas_basics/
+week1_pandas_basics/
+Week2_SpatialEngineering/
