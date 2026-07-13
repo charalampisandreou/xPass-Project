@@ -5,16 +5,15 @@ import numpy as np
 
 def process_match_json(file_path):
     """
-    Takes a single StatsBomb JSON match file, calculates all the spatial (distance, angle) 
-    and game-state (score, time) features, and returns a clean DataFrame ready for our ML model.
+    Takes a single StatsBomb JSON match file, calculates all the spatial 
+    and game-state features, and returns a clean DataFrame ready for the ML model.
     """
-    # 1. Load the raw data
+    # Load the raw data
     with open(file_path, 'r', encoding='utf-8') as f:
         match_data = json.load(f)
     df = pd.DataFrame(match_data)
     
-    # Grab the match ID from the file name (e.g., "3764440.json" -> "3764440")
-    # We will need this later to make sure passes from the same game stay together during cross-validation.
+    # Grab the match ID from the file name
     match_id = os.path.basename(file_path).replace('.json', '')
     df['match_id'] = match_id
     
@@ -24,10 +23,17 @@ def process_match_json(file_path):
 
     # --- Match Clock Feature ---
     # Convert minutes and seconds into a single percentage from 0.0 to 1.0. 
-    # We cap it at 1.0 (45 minutes) so that long injury-time periods don't skew our math.
+    # Cap it at 1.0 (45 minutes) so that long injury-time periods don't skew the math.
     half_seconds = 45 * 60
     df['raw_seconds'] = (df['minute'] * 60) + df['second']
-    df['half_percentage'] = np.minimum(df['raw_seconds'] / half_seconds, 1.0)
+
+    #I will adjust the minutes so that the percentages reset for the second half
+    df['adjusted_seconds'] = np.where(
+        df['period'] == 2,
+        df['raw_seconds'] - half_seconds,
+        df['raw_seconds']
+    )
+    df['half_percentage'] = np.minimum(df['adjusted_seconds'] / half_seconds, 1.0)
 
     # --- Scoreboard Feature ---
     # Figure out the two teams playing.
@@ -46,8 +52,7 @@ def process_match_json(file_path):
         df['team1_goal_step'] = np.where((df['team_name'] == team1) & (df['shot_outcome'] == 'Goal'), 1, 0)
         df['team2_goal_step'] = np.where((df['team_name'] == team2) & (df['shot_outcome'] == 'Goal'), 1, 0)
 
-        # Also check for Own Goals. 
-        # If Team 2 kicks it into their own net, we give +1 point to Team 1.
+        # Also check for Own Goals.
         df['team1_goal_step'] += np.where((df['team_name'] == team2) & (df['event_type'] == 'Own Goal Against'), 1, 0)
         df['team2_goal_step'] += np.where((df['team_name'] == team1) & (df['event_type'] == 'Own Goal Against'), 1, 0)
 
@@ -55,7 +60,7 @@ def process_match_json(file_path):
         df['team1_running_score'] = df['team1_goal_step'].cumsum()
         df['team2_running_score'] = df['team2_goal_step'].cumsum()
 
-        # Calculate the goal difference (+1, -2, etc.) from the perspective of the team currently making the pass
+        # Calculate the goal difference from the perspective of the team currently making the pass
         conditions = [df['team_name'] == team1, df['team_name'] == team2]
         choices = [
             df['team1_running_score'] - df['team2_running_score'],
@@ -66,38 +71,35 @@ def process_match_json(file_path):
     # 2. Filter down to only passing events
     df_pass = df[df['event_type'] == 'Pass'].copy()
 
-    # DATA CLEANING: If a pass doesn't have a starting location logged, drop it. 
-    # We can't do geometry without coordinates.
+    # Drop any passes that do not have a starting location (Data Cleaning)
     df_pass = df_pass.dropna(subset=['location'])
 
     # --- Target Variable (Y) ---
     # StatsBomb implicitly assumes a pass is successful if the 'outcome' is missing.
     # If it failed, it will have a reason (like 'Incomplete' or 'Out').
-    # We convert this into a clean 1 (Completed) or 0 (Failed).
+    # Convert this into a clean 1 (Completed) or 0 (Failed).
     df_pass['outcome_name'] = df_pass['pass'].apply(lambda x: x.get('outcome', {}).get('name') if isinstance(x, dict) else None)
     df_pass['pass_outcome'] = df_pass['outcome_name'].isna().astype(int)
 
     # Convert the pressure flag into a simple 1 (True) or 0 (False)
     df_pass['under_pressure'] = df_pass['under_pressure'].fillna(False).astype(int)
 
-    # Helper function to easily grab values out of the nested 'pass' dictionary
-    def apply_simple(df_obj, colname, key):
-        return df_obj[colname].apply(lambda x: x.get(key) if isinstance(x, dict) else None)
 
     # Grab the end location of the pass
-    df_pass['end_location'] = apply_simple(df_pass, 'pass', 'end_location')
+    df_pass['end_location'] = df_pass['pass'].apply(lambda x: x.get('end_location') if isinstance(x, dict) else None)
+
     
-    # DATA CLEANING: Drop passes that rolled off camera or don't have an end destination logged.
+    # Drop any passes that do not have an ending location (Data Cleaning)
     df_pass = df_pass.dropna(subset=['end_location'])
 
-    # 3. Spatial Math (Geometry & Physics)
+    # 3. Spatial Math
     # Split the location arrays into exact X and Y coordinates
     df_pass['start_x'] = df_pass['location'].apply(lambda x: x[0] if isinstance(x, list) else None)
     df_pass['start_y'] = df_pass['location'].apply(lambda x: x[1] if isinstance(x, list) else None)
     df_pass['end_x'] = df_pass['end_location'].apply(lambda x: x[0] if isinstance(x, list) else None)
     df_pass['end_y'] = df_pass['end_location'].apply(lambda x: x[1] if isinstance(x, list) else None)
 
-    # Calculate the angle and length of the pass using basic trigonometry and the Pythagorean theorem
+    # Calculate the angle and length of the pass
     df_pass['pass_angle'] = np.arctan2(df_pass['end_y'] - df_pass['start_y'], df_pass['end_x'] - df_pass['start_x'])
     df_pass['pass_length'] = np.sqrt((df_pass['end_x'] - df_pass['start_x'])**2 + (df_pass['end_y'] - df_pass['start_y'])**2)
     
