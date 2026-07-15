@@ -107,12 +107,36 @@ def process_match_json(file_path):
     df_pass['dist_to_goal'] = np.sqrt((120 - df_pass['start_x'])**2 + (40 - df_pass['start_y'])**2)
     df_pass['dist_receiv_middle'] = df_pass['end_x'] - 60
 
+    # ---Determine whether a pass is progressive or not---
+    """
+    According to Wyscout a pass is considered progressive if the distance between the starting point and the next touch is:
+    1. at least 30 meters closer to the opponent's goal if the starting and finishing points are within a team's own half
+    2. at least 15 meters closer to the opponent's goal if the starting and finishing points are in different halves
+    3. at least 10 meters closer to the opponent's goal if the starting and finishing points are in the opponent's half
+    """
+
+    yards_conversion = 1.09361
+
+    cond_own = (df_pass['start_x'] < 60) & (df_pass['end_x'] < 60) & (df_pass['pass_length'] >= 30 * yards_conversion)
+    cond_diff = (df_pass['start_x'] < 60) & (df_pass['end_x'] >= 60) & (df_pass['pass_length'] >= 15 * yards_conversion)
+    cond_opp = (df_pass['start_x'] >= 60) & (df_pass['end_x'] >= 60) & (df_pass['pass_length'] >= 10 * yards_conversion)
+
+    df_pass['is_progressive'] = np.select(
+        [cond_own, cond_diff, cond_opp],
+        [1, 1, 1],
+        default = 0
+    ) 
+
+
+
+
     # 4. Final Cleanup
     # We generated a lot of extra columns. Let's explicitly list only the ones our ML model actually needs.
     feature_cols = [
         'period', 'half_percentage', 'net_score', 'under_pressure',
         'start_x', 'start_y', 'end_x', 'end_y', 
-        'pass_angle', 'pass_length', 'dist_to_goal', 'dist_receiv_middle'
+        'pass_angle', 'pass_length', 'dist_to_goal', 'dist_receiv_middle',
+        'is_progressive'
     ]
 
     # Create the final, clean DataFrame and reset the row numbers so they go 0, 1, 2, 3... perfectly.
