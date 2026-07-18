@@ -105,7 +105,6 @@ def process_match_json(file_path):
     
     # Calculate situational distances (The opponent's goal is always at X=120, Y=40 on this pitch)
     df_pass['dist_to_goal'] = np.sqrt((120 - df_pass['start_x'])**2 + (40 - df_pass['start_y'])**2)
-    df_pass['dist_receiv_middle'] = df_pass['end_x'] - 60
 
     # ---Determine whether a pass is progressive or not---
     """
@@ -127,6 +126,33 @@ def process_match_json(file_path):
         default = 0
     ) 
 
+    # ---One-Hot Encoding for Pass Height, Body Part and Play pattern---
+    df_pass['height'] = df_pass['pass'].apply(lambda x: x.get('height', {}).get('name') if isinstance(x, dict) else None)
+    df_pass['body_part'] = df_pass['pass'].apply(lambda x: x.get('body_part', {}).get('name') if isinstance(x, dict) else None)
+    df_pass['play_pattern'] = df_pass['play_pattern'].apply(lambda x: x.get('name'))
+
+    df_pass['height'] = df_pass['height'].fillna('Ground Pass')
+    df_pass['body_part'] = df_pass['body_part'].fillna('Other')
+    df_pass['play_pattern'] = df_pass['play_pattern'].fillna('Other')
+
+    # I cannot use dummies because some data files may not contain every type of height, body part etc.
+    # I need to do it manually for every single type (I always need to exclude one)
+
+    df_pass['height_Low Pass'] = np.where(df_pass['height'] == 'Low Pass', 1, 0)
+    df_pass['height_High Pass'] = np.where(df_pass['height'] == 'High Pass', 1, 0)
+
+    df_pass['body_part_Foot'] = np.where(df_pass['body_part'].isin(['Right Foot', 'Left Foot']), 1, 0)
+    df_pass['body_part_Head'] = np.where(df_pass['body_part'] == 'Head', 1, 0)
+    df_pass['body_part_Keeper Arm'] = np.where(df_pass['body_part'] == 'Keeper Arm', 1, 0)
+
+    df_pass['play_pattern_Regular Play'] = np.where(df_pass['play_pattern'] == 'Regular Play', 1, 0)
+    df_pass['play_pattern_Kick Off'] = np.where(df_pass['play_pattern'] == 'From Kick Off', 1, 0)
+    df_pass['play_pattern_Throw In'] = np.where(df_pass['play_pattern'] == 'From Throw In', 1, 0)
+    df_pass['play_pattern_Free Kick'] = np.where(df_pass['play_pattern'] == 'From Free Kick', 1, 0)
+    df_pass['play_pattern_Goal Kick'] = np.where(df_pass['play_pattern'] == 'From Goal Kick', 1, 0)
+    df_pass['play_pattern_Keeper'] = np.where(df_pass['play_pattern'] == 'From Keeper', 1, 0)
+    df_pass['play_pattern_Corner'] = np.where(df_pass['play_pattern'] == 'From Corner', 1, 0)
+
 
 
 
@@ -135,8 +161,13 @@ def process_match_json(file_path):
     feature_cols = [
         'period', 'half_percentage', 'net_score', 'under_pressure',
         'start_x', 'start_y', 'end_x', 'end_y', 
-        'pass_angle', 'pass_length', 'dist_to_goal', 'dist_receiv_middle',
-        'is_progressive'
+        'pass_angle', 'pass_length', 'dist_to_goal',
+        'is_progressive',
+        'height_Low Pass', 'height_High Pass',
+        'body_part_Foot', 'body_part_Head', 'body_part_Keeper Arm',
+        'play_pattern_Regular Play', 'play_pattern_Kick Off', 'play_pattern_Throw In',
+        'play_pattern_Free Kick', 'play_pattern_Goal Kick', 'play_pattern_Keeper',
+        'play_pattern_Corner'
     ]
 
     # Create the final, clean DataFrame and reset the row numbers so they go 0, 1, 2, 3... perfectly.
