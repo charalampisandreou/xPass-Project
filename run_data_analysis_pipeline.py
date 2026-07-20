@@ -1,7 +1,7 @@
 import glob
 import os
 import pandas as pd
-from src.pipeline import process_match_json
+from src.data_analysis_pipeline import process_match_json
 
 # 1. Define paths
 json_directory = "data/raw/" 
