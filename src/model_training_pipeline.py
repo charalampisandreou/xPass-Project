@@ -4,7 +4,7 @@ import pandas as pd
 from xgboost import XGBClassifier
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import log_loss, brier_score_loss
+from sklearn.metrics import log_loss, brier_score_loss, roc_auc_score, accuracy_score
 
 FEAT_TRUEBEST = [
     'start_x',
@@ -84,11 +84,20 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     raw_probs = xgb_standalone.predict_proba(X_test)[:, 1]
     cal_probs = calibrated_model.predict_proba(X_test)[:, 1]
 
+    raw_preds = xgb_standalone.predict(X_test)
+    cal_preds = calibrated_model.predict(X_test)
+
+    raw_testaccuracy = accuracy_score(y_test, raw_preds)
+    cal_testaccuracy = accuracy_score(y_test, cal_preds)
+
     raw_logloss = log_loss(y_test, raw_probs)
     cal_logloss = log_loss(y_test, cal_probs)
 
     raw_brier = brier_score_loss(y_test, raw_probs)
     cal_brier = brier_score_loss(y_test, cal_probs)
+
+    raw_rocauc = roc_auc_score(y_test, raw_probs)
+    cal_rocauc = roc_auc_score(y_test, cal_probs)
 
     print("\n=== EXPANDED DATASET HOLD-OUT EVALUATION ===")
     print(f"Uncalibrated Baseline -> Log-Loss: {raw_logloss:.4f} | Brier Score: {raw_brier:.4f}")
@@ -105,12 +114,25 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         print("\n[DEPLOYMENT DECISION]: Calibrated model outperformed or matched baseline. Saving Calibrated Wrapper.")
         joblib.dump(calibrated_model, artifact_path)
         final_model = calibrated_model
+        final_testaccuracy = cal_testaccuracy
+        final_logloss = cal_logloss
+        final_brier = cal_brier
+        final_rocauc = cal_rocauc
         is_calibrated_deployed = True
     else:
         print("\n[DEPLOYMENT DECISION]: Raw XGBoost preserved superior generalization. Dropping calibration layer.")
         joblib.dump(xgb_standalone, artifact_path)
         final_model = xgb_standalone
+        final_testaccuracy = raw_testaccuracy
+        final_logloss = raw_logloss
+        final_brier = raw_brier
+        final_rocauc = raw_rocauc
         is_calibrated_deployed = False
 
-    
+    print('Final XGBOOST Model Test Metrics:')
+    print(f"Test Accuracy: {final_testaccuracy:.4f}")
+    print(f"Test Log-Loss: {final_logloss:.4f}")
+    print(f"Test Brier Score: {final_brier:.4f}")
+    print(f"Test ROC AUC: {final_rocauc:.4f}")
+
     return final_model, is_calibrated_deployed
