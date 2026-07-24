@@ -27,20 +27,21 @@ FEAT_TRUEBEST = [
 ]
 
 
-def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False):
+def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False, features: list = FEAT_TRUEBEST):
     """
     Trains the xP model on the expanded dataset footprint. Automatically tests 
     Cross-Validated Calibration and deploys the best-performing version based on Test Log-Loss.
     """
     print(f"\n--- Initiating Training Corpus Ingestion ({len(df)} passes) ---")
 
-    X = df[FEAT_TRUEBEST]
+    X = df[features]
     y = df['pass_outcome']
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.15, random_state=42, stratify=y
     )
 
+    print(f"\nFeatures that will be used: {features}\n")
 
     # 1. Train the Pure Standalone Base Model
     print("Training Standalone Base XGBoost Model...")
@@ -52,7 +53,8 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         subsample = 0.8,
         colsample_bytree = 0.8,
         eval_metric = 'logloss',
-        random_state = 42
+        random_state = 42,
+        n_jobs = -1
     )
 
     xgb_standalone.fit(X_train, y_train)
@@ -68,7 +70,8 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         subsample = 0.8,
         colsample_bytree = 0.8,
         eval_metric = 'logloss',
-        random_state = 42
+        random_state = 42,
+        n_jobs = -1
     )
 
     calibrated_model = CalibratedClassifierCV(

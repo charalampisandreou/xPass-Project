@@ -1,9 +1,40 @@
-.ipynb_checkpoints/
+# Byte-compiled / optimized / DLL files
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter Notebook Checkpoints
+.ipynb_checkpoints/
+
+# Virtual Environments
+venv/
+.venv/
+env/
+
+# OS/IDE junk
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Ignore raw/processed data & downloaded JSONs
 data/
 *.json
-# Ignore the practice workspace folders
-Learning/Week1_PandasBasics/Exercises/
-Learning/Week1_PandasBasics/data/
-Learning/Week2_SpatialEngineering/data/
+*.csv
+*.parquet
+
+# Practice / scratchpad folders
+Learning/
+notebooks/
 project-history.txt
+
+# --- MODELS DIRECTORY MANAGEMENT ---
+# Ignore binary model weights / serialized artifacts everywhere
+*.joblib
+*.pkl
+*.onnx
+
+# Allow tracking folder structures inside models/ while ignoring contents
+models/*
+!models/final/
+models/final/*
+!models/final/.gitkeep

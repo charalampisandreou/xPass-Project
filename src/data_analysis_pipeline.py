@@ -129,7 +129,7 @@ def process_match_json(file_path):
     # ---One-Hot Encoding for Pass Height, Body Part and Play pattern---
     df_pass['height'] = df_pass['pass'].apply(lambda x: x.get('height', {}).get('name') if isinstance(x, dict) else None)
     df_pass['body_part'] = df_pass['pass'].apply(lambda x: x.get('body_part', {}).get('name') if isinstance(x, dict) else None)
-    df_pass['play_pattern'] = df_pass['play_pattern'].apply(lambda x: x.get('name'))
+    df_pass['play_pattern'] = df_pass['play_pattern'].apply(lambda x: x.get('name') if isinstance(x, dict) else None)
 
     df_pass['height'] = df_pass['height'].fillna('Ground Pass')
     df_pass['body_part'] = df_pass['body_part'].fillna('Other')
