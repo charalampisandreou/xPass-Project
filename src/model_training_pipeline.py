@@ -1,8 +1,12 @@
 import os
+import glob
+import sys
 import joblib
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 from xgboost import XGBClassifier
-from sklearn.calibration import CalibratedClassifierCV
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import log_loss, brier_score_loss, roc_auc_score, accuracy_score
 
@@ -26,8 +30,70 @@ FEAT_TRUEBEST = [
     'under_pressure'
 ]
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 
-def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False, features: list = FEAT_TRUEBEST):
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+
+def fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name):
+    raw_prob_true = raw_cal_curve[0]
+    raw_prob_pred = raw_cal_curve[1]
+
+    cal_prob_true = cal_cal_curve[0]
+    cal_prob_pred = cal_cal_curve[1]
+
+    fig, ax = plt.subplots(figsize = (9, 9), dpi = 300)
+
+    # Draw the dotted diagonal
+    ax.plot([0, 1], [0, 1], 'k--', label = 'Perfectly Calibrated', alpha = 0.7)
+
+    # Plot the curves
+    ax.plot(raw_prob_pred, raw_prob_true, 's-', color = 'blue', label = 'Uncalibrated')
+    ax.plot(cal_prob_pred, cal_prob_true, 'o-', color = 'red', label = 'Calibrated')
+
+    # Set the limits
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+
+    # Set the labels
+    ax.set_xlabel("Mean Predicted Probability (xPass)")
+    ax.set_ylabel("Actual Pass Completion Rate")
+
+    #Add Grid, Title and Legend
+    ax.grid(True, alpha = 0.3)
+    ax.suptitle(
+        "Model Reliability Diagram",
+        color = 'black',
+        loc= 'center',
+        fontsize = 16,
+        fontweight = 'bold'
+    )
+    ax.set_title(
+        f"Model Name: {model_name}",
+        color = 'black',
+        loc = 'center',
+        style = 'italic',
+        fontsize = 12,
+        pad = 10
+    )
+    ax.legend(loc = 'lower right', fontsize = 12)
+
+    ticks = np.arange(0, 1.1, 0.1)
+    ax.set_xticks(ticks)
+    ax.set_yticks(ticks)
+
+    fig_name = "calibration_curve_" + model_name + ".png"
+    fig_dir = os.path.join(PROJECT_ROOT, "reports", "figures", "diagnostics", fig_name)
+    if not os.path.exists(os.path.dirname(fig_dir)):
+        os.makedirs(os.path.dirname(fig_dir))
+    plt.savefig(fig_dir, bbox_inches = 'tight')
+
+    plt.show()
+    
+
+def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False, features: list = FEAT_TRUEBEST, run_diagnostics: bool = True):
     """
     Trains the xP model on the expanded dataset footprint. Automatically tests 
     Cross-Validated Calibration and deploys the best-performing version based on Test Log-Loss.
@@ -137,5 +203,17 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     print(f"Test Log-Loss: {final_logloss:.4f}")
     print(f"Test Brier Score: {final_brier:.4f}")
     print(f"Test ROC AUC: {final_rocauc:.4f}")
+
+
+    if run_diagnostics:
+        raw_cal_curve = calibration_curve(y_test, raw_probs, n_bins = 10)
+        cal_cal_curve = calibration_curve(y_test, cal_probs, n_bins = 10)
+        fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name)
+        
+
+
+
+    
+    
 
     return final_model, is_calibrated_deployed

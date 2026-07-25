@@ -38,3 +38,5 @@ models/*
 !models/final/
 models/final/*
 !models/final/.gitkeep
+
+reports/
