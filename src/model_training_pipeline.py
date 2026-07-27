@@ -27,7 +27,10 @@ FEAT_TRUEBEST = [
     'play_pattern_Goal Kick',
     'play_pattern_Keeper',
     'play_pattern_Corner',
-    'under_pressure'
+    'under_pressure',
+    'period',
+    'half_percentage',
+    'net_score'
 ]
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +40,10 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 
-def fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name):
+
+# RELIABILITY DIAGRAM FUNCTION
+
+def fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name):
     raw_prob_true = raw_cal_curve[0]
     raw_prob_pred = raw_cal_curve[1]
 
@@ -63,10 +69,9 @@ def fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name):
 
     #Add Grid, Title and Legend
     ax.grid(True, alpha = 0.3)
-    ax.suptitle(
+    fig.suptitle(
         "Model Reliability Diagram",
         color = 'black',
-        loc= 'center',
         fontsize = 16,
         fontweight = 'bold'
     )
@@ -91,7 +96,156 @@ def fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name):
     plt.savefig(fig_dir, bbox_inches = 'tight')
 
     plt.show()
+    plt.close()
+
+
+
     
+def collapse_onehot_groups(shap_values, X: pd.DataFrame):
+    """
+    Sums SHAP values across one-hot dummy columns sharing a prefix into a single
+    pseudo-feature, so categorical variables aren't fragmented across many rows.
+    Returns (values, data, feature_names) as raw arrays for shap.summary_plot.
+    """
+    vals = shap_values.values.copy()
+    data = X.values.copy()
+    cols = list(X.columns)
+    col_idx = {c: i for i, c in enumerate(cols)}
+
+    groups = {
+        "Height": {
+            "height_Low Pass": "Low Pass",
+            "height_High Pass": "High Pass",
+            "__baseline__": "Ground Pass"
+        },
+        "Body Part":{
+            "body_part_Foot": "Foot",
+            "body_part_Head": "Head",
+            "body_part_Keeper Arm": "Keeper Arm",
+            "__baseline__": "Other"
+        },
+        "Play Pattern":{
+            "play_pattern_Regular Play": "Regular Play",
+            "play_pattern_Kick Off": "Kick Off",
+            "play_pattern_Throw In": "Throw In",
+            "play_pattern_Free Kick": "Free Kick",
+            "play_pattern_Goal Kick": "Goal Kick",
+            "play_pattern_Keeper": "Keeper",
+            "play_pattern_Corner": "Corner",
+            "__baseline__": "Other"
+        }
+    }
+
+    keep_mask = np.ones(len(cols), dtype = bool)
+    new_cols = []
+    new_vals = []
+    new_data = []
+
+    for label, mapping in groups.items():
+        dummy_cols = [c for c in mapping if c!= "__baseline__"]
+        group_idx = [col_idx[c] for c in dummy_cols if c in col_idx]
+        if not group_idx:
+            continue
+        keep_mask[group_idx] = False
+
+        group_data = data[:, group_idx]
+        summed = vals[:, group_idx].sum(axis=1)
+
+        category_order = [mapping["__baseline__"]] + [mapping[c] for c in dummy_cols]
+
+        active_idx = group_data.argmax(axis=1)          # index of the "1", meaningless if row is all-zero
+        is_baseline = group_data.sum(axis=1) == 0
+        cat_code = np.where(is_baseline, 0, active_idx + 1)
+
+        new_cols.append(label)
+        new_vals.append(summed)
+        new_data.append(cat_code.astype(float))
+
+    remaining_cols = [c for i, c in enumerate(cols) if keep_mask[i]]
+    remaining_vals = vals[:, keep_mask]
+    remaining_data = data[:, keep_mask]
+
+    final_vals = np.hstack([remaining_vals, np.array(new_vals).T]) if new_cols else remaining_vals
+    final_data = np.hstack([remaining_data, np.array(new_data).T]) if new_cols else remaining_data
+    final_cols = remaining_cols + new_cols if new_cols else remaining_cols
+
+    return final_vals, final_data, final_cols
+
+# SHAP DIAGRAM FUNCTION
+
+def fig_shap_diagram(base_model, X_sample: pd.DataFrame, model_name: str, collapse_categoricals: bool = True):
+    import shap
+
+    rename_map = {
+        "start_x": "Start Position (X)",
+        "start_y": "Start Position (Y)",
+        "dist_to_goal": "Distance to Goal",
+        "pass_angle": "Pass Angle",
+        "under_pressure": "Under Pressure",
+        "period": "Match Period",
+        "half_percentage": "Time in Half (%)",
+        "net_score": "Score Differential",
+    }
+
+    explainer = shap.TreeExplainer(base_model)
+    shap_values = explainer(X_sample)
+
+    fig = plt.figure(figsize = (10, 8), dpi = 300)
+
+    if collapse_categoricals:
+        final_vals, final_data, final_cols = collapse_onehot_groups(shap_values, X_sample)
+        display_cols = [rename_map.get(c, c.replace("_", " ")) for c in final_cols]
+
+        shap.summary_plot(
+            final_vals,
+            final_data,
+            feature_names=display_cols,
+            show=False,
+            plot_size=None,
+        )
+
+    else:
+        X_display = X_sample.copy()
+        X_display.columns = [rename_map.get(c, c.replace("_", " ")) for c in X_sample.columns]
+
+        shap.summary_plot(
+            shap_values,
+            X_display,
+            show=False,
+            plot_size=None,
+        )
+
+
+    fig.suptitle(
+        "Feature Contribution & Impact (SHAP)",
+        color = 'black',
+        fontsize = 16,
+        fontweight = 'bold',
+        y = 1.03
+    )
+
+    plt.title(
+        f"Model Name: {model_name}",
+        color = 'black',
+        loc = 'center',
+        style = 'italic',
+        fontsize = 12,
+        pad = 10
+    )
+
+    fig_name = "shap_diagram_" + model_name + ".png"
+    fig_dir = os.path.join(PROJECT_ROOT, "reports", "figures", "diagnostics", fig_name)
+    os.makedirs(os.path.dirname(fig_dir), exist_ok = True)
+
+    plt.savefig(fig_dir, bbox_inches = 'tight')
+    plt.show()
+    plt.close()
+
+
+
+
+
+# MODEL TRAINING FUNCTION
 
 def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False, features: list = FEAT_TRUEBEST, run_diagnostics: bool = True):
     """
@@ -206,14 +360,25 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
 
 
     if run_diagnostics:
+
+        print('\nBeginning Model Diagnostics...')
+
         raw_cal_curve = calibration_curve(y_test, raw_probs, n_bins = 10)
         cal_cal_curve = calibration_curve(y_test, cal_probs, n_bins = 10)
-        fig_calibration_curve(raw_cal_curve, cal_cal_curve, model_name)
+        fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name)
         
+        X_shap = X_test.sample(n = min(30000, len(X_test)), random_state = 42)
+
+        
+        if is_calibrated_deployed:
+            base_estimator = final_model.calibrated_classifiers_[0].estimator
+        else:
+            base_estimator = final_model
+
+        fig_shap_diagram(base_estimator, X_shap, model_name)
+
+        print('Diagnostics Complete!')
 
 
-
-    
-    
 
     return final_model, is_calibrated_deployed

@@ -37,28 +37,6 @@ def main():
         model_name = "xpass_production_" + date_str,
         models_dir = models_dir,
         force_calibration = False,
-        features = [
-            'start_x',
-                'start_y',
-                'pass_angle',
-                'dist_to_goal',
-                'height_Low Pass',
-                'height_High Pass',
-                'body_part_Foot',
-                'body_part_Head',
-                'body_part_Keeper Arm',
-                'play_pattern_Regular Play',
-                'play_pattern_Kick Off',
-                'play_pattern_Throw In',
-                'play_pattern_Free Kick',
-                'play_pattern_Goal Kick',
-                'play_pattern_Keeper',
-                'play_pattern_Corner',
-                'under_pressure',
-                'period',
-                'half_percentage',
-                'net_score'
-        ]
     )
 
     print("\nModel Training Complete!")

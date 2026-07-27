@@ -100,9 +100,13 @@ def process_match_json(file_path):
     df_pass['end_y'] = df_pass['end_location'].apply(lambda x: x[1] if isinstance(x, list) else None)
 
     # Calculate the angle and length of the pass
-    df_pass['pass_angle'] = np.arctan2(df_pass['end_y'] - df_pass['start_y'], df_pass['end_x'] - df_pass['start_x'])
-    df_pass['pass_length'] = np.sqrt((df_pass['end_x'] - df_pass['start_x'])**2 + (df_pass['end_y'] - df_pass['start_y'])**2)
+    #df_pass['pass_angle'] = np.arctan2(df_pass['end_y'] - df_pass['start_y'], df_pass['end_x'] - df_pass['start_x'])
+    #df_pass['pass_length'] = np.sqrt((df_pass['end_x'] - df_pass['start_x'])**2 + (df_pass['end_y'] - df_pass['start_y'])**2)
     
+    df_pass['pass_angle'] = df_pass['pass'].apply(lambda x: x.get('angle') if isinstance (x, dict) else None)
+    df_pass['pass_length'] = df_pass['pass'].apply(lambda x: x.get('length') if isinstance (x, dict) else None)
+
+
     # Calculate situational distances (The opponent's goal is always at X=120, Y=40 on this pitch)
     df_pass['dist_to_goal'] = np.sqrt((120 - df_pass['start_x'])**2 + (40 - df_pass['start_y'])**2)
 
