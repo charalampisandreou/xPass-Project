@@ -68,6 +68,7 @@ def process_match_json(file_path):
         ]
         df['net_score'] = np.select(conditions, choices, default=0)
 
+
     # 2. Filter down to only passing events
     df_pass = df[df['event_type'] == 'Pass'].copy()
 
@@ -158,10 +159,18 @@ def process_match_json(file_path):
     df_pass['play_pattern_Corner'] = np.where(df_pass['play_pattern'] == 'From Corner', 1, 0)
 
 
+    # 4. Extract MetaData
+    df_pass['event_id'] = df_pass['id']
+    df_pass['team_id'] = df_pass['team'].apply(lambda x: x.get('id') if isinstance (x, dict) else None)
+    df_pass['player_id'] = df_pass['player'].apply(lambda x: x.get('id') if isinstance (x, dict) else None)
+    df_pass['player_name'] = df_pass['player'].apply(lambda x: x.get('name') if isinstance (x, dict) else None)
+    df_pass['player_position'] = df_pass['position'].apply(lambda x: x.get('name') if isinstance(x, dict) else None)
+    df_pass['pass_recipient'] = df_pass['pass'].apply(lambda x: x.get('recipient', {}).get('name') if isinstance (x, dict) else None)
+    df_pass['recipient_id'] = df_pass['pass'].apply(lambda x: x.get('recipient', {}).get('id') if isinstance (x, dict) else None)
 
-
-    # 4. Final Cleanup
+    # 5. Final Cleanup
     # We generated a lot of extra columns. Let's explicitly list only the ones our ML model actually needs.
+    # + MetaData
     feature_cols = [
         'period', 'half_percentage', 'net_score', 'under_pressure',
         'start_x', 'start_y', 'end_x', 'end_y', 
@@ -174,6 +183,18 @@ def process_match_json(file_path):
         'play_pattern_Corner'
     ]
 
+    metadata_cols = [
+        'match_id',
+        'event_id',
+        'team_id',
+        'team_name',
+        'player_name',
+        'player_id',
+        'player_position',
+        'pass_recipient',
+        'recipient_id'
+    ]
+
     # Create the final, clean DataFrame and reset the row numbers so they go 0, 1, 2, 3... perfectly.
-    output_df = df_pass[['match_id'] + feature_cols + ['pass_outcome']].copy()
+    output_df = df_pass[metadata_cols + feature_cols + ['pass_outcome']].copy()
     return output_df.reset_index(drop=True)

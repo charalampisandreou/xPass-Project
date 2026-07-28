@@ -27,23 +27,69 @@ FEAT_TRUEBEST = [
     'play_pattern_Goal Kick',
     'play_pattern_Keeper',
     'play_pattern_Corner',
-    'under_pressure',
-    'period',
-    'half_percentage',
-    'net_score'
+    'under_pressure'
 ]
 
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
+def save_metrics_report(
+        model_name: str,
+        models_dir: str,
+        is_calibrated_deployed: bool,
+        raw_logloss: float,
+        cal_logloss: float,
+        raw_brier: float,
+        cal_brier: float,
+        raw_rocauc: float,
+        cal_rocauc: float,
+        raw_testaccuracy: float,
+        cal_testaccuracy: float,
+        final_logloss: float,
+        final_brier: float,
+        final_rocauc: float,
+        final_testaccuracy: float,
+        features: list = FEAT_TRUEBEST
+):
+    report_name = f"metrics_report_{model_name}.txt"
+    report_path = os.path.join(models_dir, "reports", report_name)
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+
+    lines = [
+        f"Model Name: {model_name}",
+        "="*50,
+        "", "",
+        f"Features used: {features}",
+        "", "",
+        "---Uncalibrated Baseline---",
+        f"Test Accuracy: {raw_testaccuracy:.4f}",
+        f"Log-Loss: {raw_logloss:.4f}",
+        f"Brier Score: {raw_brier:.4f}",
+        f"ROC AUC: {raw_rocauc:.4f}",
+        "",
+        "---Calibrated (Isotonic, 5-Fold CV)---",
+        f"Test Accuracy: {cal_testaccuracy:.4f}",
+        f"Log-Loss: {cal_logloss:.4f}",
+        f"Brier Score: {cal_brier:.4f}",
+        f"ROC AUC: {cal_rocauc:.4f}",
+        "", "",
+        "---FINAL MODEL---",
+        f"Deployment Decision: {'Calibrated' if is_calibrated_deployed else 'Raw XGBoost'}",
+        f"Final Test Accuracy: {final_testaccuracy:.4f}",
+        f"Final Log-Loss: {final_logloss:.4f}",
+        f"Final Brier Score: {final_brier:.4f}",
+        f"Final ROC AUC: {final_rocauc:.4f}",
+        ""
+    ]
+
+    with open(report_path, "w") as f:
+        f.write("\n".join(lines))
+
+    print(f"\nMetrics report saved to: {report_path}")
 
 
 
 # RELIABILITY DIAGRAM FUNCTION
 
-def fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name):
+def fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name, models_dir):
     raw_prob_true = raw_cal_curve[0]
     raw_prob_pred = raw_cal_curve[1]
 
@@ -89,11 +135,13 @@ def fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name):
     ax.set_xticks(ticks)
     ax.set_yticks(ticks)
 
-    fig_name = "calibration_curve_" + model_name + ".png"
-    fig_dir = os.path.join(PROJECT_ROOT, "reports", "figures", "diagnostics", fig_name)
+    fig_name = "reliability_diagram_" + model_name + ".png"
+    fig_dir = os.path.join(models_dir, "reports", fig_name)
     if not os.path.exists(os.path.dirname(fig_dir)):
         os.makedirs(os.path.dirname(fig_dir))
     plt.savefig(fig_dir, bbox_inches = 'tight')
+
+    print(f"\nReliability Diagram saved to: {fig_dir}")
 
     plt.show()
     plt.close()
@@ -173,7 +221,8 @@ def collapse_onehot_groups(shap_values, X: pd.DataFrame):
 
 # SHAP DIAGRAM FUNCTION
 
-def fig_shap_diagram(base_model, X_sample: pd.DataFrame, model_name: str, collapse_categoricals: bool = True):
+def fig_shap_diagram(base_model: XGBClassifier, models_dir: str, X_sample: pd.DataFrame, model_name: str, 
+                     collapse_categoricals: bool = True):
     import shap
 
     rename_map = {
@@ -234,10 +283,12 @@ def fig_shap_diagram(base_model, X_sample: pd.DataFrame, model_name: str, collap
     )
 
     fig_name = "shap_diagram_" + model_name + ".png"
-    fig_dir = os.path.join(PROJECT_ROOT, "reports", "figures", "diagnostics", fig_name)
+    fig_dir = os.path.join(models_dir, "reports", fig_name)
     os.makedirs(os.path.dirname(fig_dir), exist_ok = True)
 
     plt.savefig(fig_dir, bbox_inches = 'tight')
+    print(f"\nSHAP Diagram saved to: {fig_dir}")
+
     plt.show()
     plt.close()
 
@@ -247,7 +298,8 @@ def fig_shap_diagram(base_model, X_sample: pd.DataFrame, model_name: str, collap
 
 # MODEL TRAINING FUNCTION
 
-def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", force_calibration: bool = False, features: list = FEAT_TRUEBEST, run_diagnostics: bool = True):
+def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", 
+                       force_calibration: bool = False, features: list = FEAT_TRUEBEST, run_diagnostics: bool = True):
     """
     Trains the xP model on the expanded dataset footprint. Automatically tests 
     Cross-Validated Calibration and deploys the best-performing version based on Test Log-Loss.
@@ -261,7 +313,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         X, y, test_size=0.15, random_state=42, stratify=y
     )
 
-    print(f"\nFeatures that will be used: {features}\n")
+    print(f"\nFeatures used: {features}\n")
 
     # 1. Train the Pure Standalone Base Model
     print("Training Standalone Base XGBoost Model...")
@@ -358,6 +410,24 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     print(f"Test Brier Score: {final_brier:.4f}")
     print(f"Test ROC AUC: {final_rocauc:.4f}")
 
+    save_metrics_report(
+        model_name=model_name,
+        models_dir=models_dir,
+        is_calibrated_deployed=is_calibrated_deployed,
+        raw_logloss=raw_logloss,
+        cal_logloss=cal_logloss,
+        raw_brier=raw_brier,
+        cal_brier=cal_brier,
+        raw_rocauc=raw_rocauc,
+        cal_rocauc=cal_rocauc,
+        raw_testaccuracy=raw_testaccuracy,
+        cal_testaccuracy=cal_testaccuracy,
+        final_logloss=final_logloss,
+        final_brier=final_brier,
+        final_rocauc=final_rocauc,
+        final_testaccuracy=final_testaccuracy,
+    )
+
 
     if run_diagnostics:
 
@@ -365,7 +435,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
 
         raw_cal_curve = calibration_curve(y_test, raw_probs, n_bins = 10)
         cal_cal_curve = calibration_curve(y_test, cal_probs, n_bins = 10)
-        fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name)
+        fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name, models_dir = models_dir)
         
         X_shap = X_test.sample(n = min(30000, len(X_test)), random_state = 42)
 
@@ -375,7 +445,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         else:
             base_estimator = final_model
 
-        fig_shap_diagram(base_estimator, X_shap, model_name)
+        fig_shap_diagram(base_estimator, models_dir, X_shap, model_name)
 
         print('Diagnostics Complete!')
 

@@ -26,18 +26,60 @@ def process_file(file_path):
     except Exception as e:
         return file_name, None, str(e)
 
+def clean_league(val: str) -> str:
+    """Replaces spaces, slashes, and quotes with clean underscores for paths."""
+    return val.strip().replace("'", "").replace('"', "").replace("-", " ")
+
+def clean_season(val: str) -> str:
+    return val.strip().replace("'", "").replace('"', "").replace("/", "-").replace(" ", "-").replace("_", "-")
+
+
 
 def main():
     json_directory = os.path.join(PROJECT_ROOT, "data", "raw", "statsbomb_free")
     output_directory = os.path.join(PROJECT_ROOT, "data", "processed")
-
-    date_str = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-    output_path = os.path.join(output_directory, f"processed_passes_{date_str}.csv")
-
     os.makedirs(output_directory, exist_ok=True)
 
-    json_pattern = os.path.join(json_directory, "**", "*.json")
+    date_str = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
+
+    print("\nWould you like to process every match available? [Y/N]")
+    a = input().strip().upper()
+
+    if(a == 'Y'):
+        print("Processing every match available...")
+        output_path = os.path.join(output_directory, f"processed_passes_{date_str}.csv")
+        json_pattern = os.path.join(json_directory, "**", "*.json")
+
+    else:
+        print("\nEnter League to process: ")
+        league_name = clean_league(input())
+        league_name_form = league_name.replace(" ", "-")
+
+
+        print("\nWould you like to process a specific season? [Y/N]")
+        b = input().strip().upper()
+
+        if(b == 'Y'):
+            print("\nEnter season to process: ")
+            season_name = clean_season(input())
+            print(f"Processing {league_name} - {season_name}...")
+            output_path = os.path.join(output_directory, f"processed_passes_{league_name_form}_{season_name}_{date_str}.csv")
+            json_pattern = os.path.join(json_directory, league_name, season_name, "*.json")
+
+        else:
+            print(f"Processing every season available of {league_name}...")
+            output_path = os.path.join(output_directory, f"processed_passes_{league_name_form}_all_seasons_{date_str}.csv")
+            json_pattern = os.path.join(json_directory, league_name, "**", "*.json")
+
+
+
+        
+
     json_files = glob.glob(json_pattern, recursive=True)
+
+    if not json_files:
+        print("\nFailed: No JSON files matched the specified pattern. Double-check your folder names.")
+        return
 
     print(f"Found {len(json_files)} match JSON files to process.")
 
