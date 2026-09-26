@@ -113,7 +113,7 @@ def main():
 
     date_str = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
     output_name = "xp_added_passes_" + status_tag + "_" + date_str + ".csv"
-    output_path = os.path.join(model_folder, "datasets", output_name)
+    output_path = os.path.join(model_folder, "datasets", "pre analysis", output_name)
 
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
