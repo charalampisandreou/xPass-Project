@@ -1,42 +1,46 @@
+# ------------------------------------------------------------
+# Whitelist approach: ignore everything at the repo root,
+# then explicitly allow only what should be on GitHub.
+# ------------------------------------------------------------
+
+# Ignore everything at the repo root
+/*
+
+# Allow only these
+!/.gitignore
+!/src/
+!/run_files/
+
+# Optional: uncomment if you add these later
+# !/README.md
+# !/requirements.txt
+
+# ------------------------------------------------------------
+# Junk to ignore inside the allowed folders
+# ------------------------------------------------------------
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Jupyter Notebook Checkpoints
+# Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 
-# Virtual Environments
+# Virtual environments
 venv/
 .venv/
 env/
 
-# OS/IDE junk
+# OS / IDE junk
 .DS_Store
 Thumbs.db
 .vscode/
 
-# Ignore raw/processed data & downloaded JSONs
-data/
+# Data files and serialized artifacts (in case any end up in src/ or run_files/)
 *.json
 *.csv
 *.parquet
-
-# Practice / scratchpad folders
-Learning/
-notebooks/
-project-history.txt
-
-# --- MODELS DIRECTORY MANAGEMENT ---
-# Ignore binary model weights / serialized artifacts everywhere
 *.joblib
 *.pkl
 *.onnx
-
-# Allow tracking folder structures inside models/ while ignoring contents
-models/*
-!models/final/
-models/final/*
-!models/final/.gitkeep
-
-reports/

@@ -11,7 +11,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from src.visualizations_pipeline import draw_leaderboard_table, plot_pass_risk_execution, plot_top_player_pass_map
+from src.visualizations_pipeline import draw_leaderboard_table, plot_pass_risk_execution, plot_top_player_pass_map, plot_team_pass_quadrants
 
 def extract_tags(csv_path: str) -> str:
     """
@@ -84,11 +84,13 @@ def main():
     fig_leaderboard_table = draw_leaderboard_table(post_player_df)
     fig_plot_pass_risk_execution = plot_pass_risk_execution(post_player_df, min_passes=300)
     fig_plot_top_player_pass_map = plot_top_player_pass_map(pva_df=post_player_df, passes_df=pre_df)
+    fig_plot_team_pass_quadrants = plot_team_pass_quadrants(post_team_df)
 
     # Save visualizations to the output directory
     pre_analysis_dir = os.path.dirname(latest_pre)
     model_dataset_dir = os.path.dirname(pre_analysis_dir)
-    output_dir = os.path.join(model_dataset_dir, "visuals")
+    model_output_dir = os.path.dirname(model_dataset_dir)
+    output_dir = os.path.join(model_output_dir, "visuals")
     os.makedirs(output_dir, exist_ok=True)
 
     date_str = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
@@ -102,6 +104,10 @@ def main():
 
     top_player_pass_map_output_path = os.path.join(output_dir, f"top_player_pass_map_{status_tag}_{date_str}.png")
     fig_plot_top_player_pass_map.savefig(top_player_pass_map_output_path)
+
+    team_pass_quadrants_output_path = os.path.join(output_dir, f"team_pass_quadrants_{status_tag}_{date_str}.png")
+    fig_plot_team_pass_quadrants.savefig(team_pass_quadrants_output_path)
+
 
     print(f"\nVisualizations saved to: {output_dir}")
 

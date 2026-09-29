@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+import warnings
 from typing import Optional, Dict, Tuple
 import numpy as np
 import pandas as pd
@@ -18,17 +20,149 @@ except ImportError:
     _HAS_ADJUST_TEXT = False
 
 
+# --------------------------------------------------------------------------- #
+# Shared validation helpers
+# --------------------------------------------------------------------------- #
+
+RATE_COLUMNS = ("actual_completion_rate", "expected_completion_rate")
+PASS_OUTCOME_CONTRACT = (
+    "pass_outcome must be binary: 1 = completed pass, 0 = incomplete/failed pass."
+)
+
+
+def _check_columns(df: pd.DataFrame, required: list[str], name: str) -> None:
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise KeyError(f"`{name}` is missing required columns: {missing}")
+
+
+def _to_numeric_strict(df: pd.DataFrame, cols, name: str, hint: str = "") -> pd.DataFrame:
+    """Return a copy of `df` with `cols` coerced to float.
+
+    Missing values (NaN/None) are preserved so the caller can decide whether to drop or
+    reject them. Non-numeric text and +/-inf are rejected instead of being silently coerced.
+    """
+    df = df.copy()
+    for col in cols:
+        raw = df[col]
+        num = pd.to_numeric(raw, errors="coerce")
+        unparseable = raw.notna() & num.isna()
+        if unparseable.any():
+            examples = raw[unparseable].unique()[:3].tolist()
+            raise ValueError(
+                f"`{name}['{col}']` contains non-numeric values (e.g. {examples}). {hint}".rstrip()
+            )
+        num = num.astype(float)
+        if np.isinf(num).any():
+            raise ValueError(f"`{name}['{col}']` contains infinite values.")
+        df[col] = num
+    return df
+
+
+def _require_no_missing(df: pd.DataFrame, cols, name: str, hint: str = "") -> None:
+    for col in cols:
+        n_missing = int(df[col].isna().sum())
+        if n_missing:
+            raise ValueError(f"`{name}['{col}']` contains {n_missing} missing value(s). {hint}".rstrip())
+
+
+def _require_non_negative_passes(df: pd.DataFrame, name: str) -> None:
+    negative = df["total_passes"] < 0
+    if negative.any():
+        raise ValueError(
+            f"`{name}['total_passes']` must be non-negative; found {int(negative.sum())} "
+            f"negative value(s) (min={df['total_passes'].min():g})."
+        )
+
+
+def _validate_rate_columns(df: pd.DataFrame, cols, name: str, missing_hint: str = "") -> None:
+    """Require `cols` to be fully populated proportions in [0, 1] (0.85 means 85%). Never clips."""
+    _require_no_missing(df, cols, name, hint=missing_hint)
+    for col in cols:
+        s = df[col]
+        out_of_range = (s < 0) | (s > 1)
+        if out_of_range.any():
+            raise ValueError(
+                f"`{name}['{col}']` must be a proportion between 0 and 1 (e.g. 0.85 for 85%), but "
+                f"{int(out_of_range.sum())} value(s) fall outside that range "
+                f"(min={s.min():.4g}, max={s.max():.4g}). Percent-scale data (0-100) must be "
+                f"divided by 100 first."
+            )
+
+
+def _warn_dropped(n_dropped: int, name: str) -> None:
+    if n_dropped:
+        warnings.warn(
+            f"`{name}`: dropped {n_dropped} row(s) with missing values in required columns.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
+def _prepare_rate_frame(
+    df: pd.DataFrame,
+    min_passes: int,
+    *,
+    name: str,
+    id_col: str,
+    entity: str,
+    extra_numeric=(),
+) -> pd.DataFrame:
+    """Validate and filter a per-player / per-team summary table.
+
+    Checks columns, numeric types, non-negative `total_passes`, the `min_passes` filter
+    (must leave at least one row), unique non-null identifiers and [0, 1] completion rates.
+    Returns a filtered copy with a clean RangeIndex.
+    """
+    _check_columns(df, [id_col, "total_passes", *RATE_COLUMNS, *extra_numeric], name)
+    out = _to_numeric_strict(df, ["total_passes", *RATE_COLUMNS, *extra_numeric], name)
+
+    _require_no_missing(out, ["total_passes"], name)
+    _require_non_negative_passes(out, name)
+
+    filtered = out[out["total_passes"] >= min_passes].reset_index(drop=True)
+    if filtered.empty:
+        max_passes = f"{out['total_passes'].max():g}" if len(out) else "n/a"
+        raise ValueError(
+            f"No {entity} remain after applying min_passes={min_passes} "
+            f"(input rows: {len(out)}, max total_passes: {max_passes})."
+        )
+
+    if filtered[id_col].isna().any():
+        raise ValueError(f"`{name}['{id_col}']` contains missing values.")
+    duplicated = filtered.loc[filtered[id_col].duplicated(), id_col].unique()
+    if len(duplicated):
+        raise ValueError(
+            f"`{name}` must be a pre-aggregated summary with one row per `{id_col}`; "
+            f"duplicated values: {list(duplicated[:5])}."
+        )
+
+    _validate_rate_columns(
+        filtered, RATE_COLUMNS, name,
+        missing_hint="Rows with zero passes have undefined rates; raise `min_passes` to exclude them.",
+    )
+    _require_no_missing(filtered, extra_numeric, name)
+    return filtered
+
+
 def draw_leaderboard_table(
     player_df: pd.DataFrame,
     top_n: int = 10,
     min_passes: int = 300
 ) -> plt.Figure:
     """Renders a dark-slate scouting leaderboard table."""
-    df = player_df[player_df['total_passes'] >= min_passes].copy()
-    
+    if top_n < 1:
+        raise ValueError("top_n must be at least 1.")
+
+    extra = ("total_pva", "CPOE") if "CPOE" in player_df.columns else ("total_pva",)
+    df = _prepare_rate_frame(
+        player_df, min_passes, name="player_df", id_col="player_name",
+        entity="players", extra_numeric=extra,
+    )
+
     if 'CPOE' not in df.columns:
         df['CPOE'] = df['actual_completion_rate'] - df['expected_completion_rate']
-        
+
     top_players = (
         df.sort_values(by='total_pva', ascending=False)
         .head(top_n)
@@ -37,7 +171,7 @@ def draw_leaderboard_table(
 
     headers = ['Rank', 'Player', 'Passes', 'Completed', 'Mean xP', 'CPOE', 'Total PVA']
     col_widths = [0.06, 0.33, 0.10, 0.14, 0.12, 0.11, 0.14]
-    
+
     cell_text = []
     cell_colors = []
 
@@ -58,11 +192,11 @@ def draw_leaderboard_table(
         cell_text.append(row_data)
 
         if rank < 3:
-            cell_colors.append(['#f0fdf4'] * len(headers))  
+            cell_colors.append(['#f0fdf4'] * len(headers))
         elif rank % 2 == 0:
-            cell_colors.append(['#f8fafc'] * len(headers))  
+            cell_colors.append(['#f8fafc'] * len(headers))
         else:
-            cell_colors.append(['#ffffff'] * len(headers))  
+            cell_colors.append(['#ffffff'] * len(headers))
 
     fig, ax = plt.subplots(figsize=(11, 5.5), dpi=300)
     ax.axis('off')
@@ -72,10 +206,10 @@ def draw_leaderboard_table(
         colLabels=headers,
         colWidths=col_widths,
         cellColours=cell_colors,
-        colColours=['#1e293b'] * len(headers),  
+        colColours=['#1e293b'] * len(headers),
         cellLoc='center',
         loc='center',
-        bbox=[0, 0, 1, 0.88] 
+        bbox=[0, 0, 1, 0.88]
     )
 
     table.auto_set_font_size(False)
@@ -87,7 +221,7 @@ def draw_leaderboard_table(
             cell.set_edgecolor('#0f172a')
         else:
             cell.set_edgecolor('#cbd5e1')
-            
+
             if col_idx == 0:
                 cell.set_text_props(ha='center', fontname='DejaVu Sans')
             elif col_idx == 1:
@@ -99,13 +233,13 @@ def draw_leaderboard_table(
                 cell.set_text_props(weight='bold', color='#047857', ha='right', fontname='DejaVu Sans')
 
     fig.text(
-        0.5, 0.96, 
-        'Top 10 Playmakers by Pass Value Added (PVA)', 
+        0.5, 0.96,
+        f'Top {len(top_players)} Playmakers by Pass Value Added (PVA)',
         ha='center', va='center', fontsize=20, weight='bold', color='#0f172a', fontname='DejaVu Sans'
     )
     fig.text(
-        0.5, 0.91, 
-        f'Minimum Threshold: {min_passes} Passes  |  Model: Calibrated XGBoost', 
+        0.5, 0.91,
+        f'Minimum Threshold: {min_passes} Passes  |  Model: Calibrated XGBoost',
         ha='center', va='center', fontsize=12, color='#64748b', fontname='DejaVu Sans'
     )
 
@@ -129,7 +263,7 @@ PALETTE = {
     "legend_face":   "#ffffff",
 }
 
-FONT = "DejaVu Sans" 
+FONT = "DejaVu Sans"
 
 Z_GRADIENT = 0
 Z_GRID = 1
@@ -148,6 +282,12 @@ def shorten_player_name(full_name: str, name_overrides: Optional[Dict[str, str]]
     return full_name.split()[-1]
 
 
+def _check_quantile(value: float, label: str) -> float:
+    if not (np.isfinite(value) and 0.0 <= value <= 1.0):
+        raise ValueError(f"{label} must be a number between 0 and 1, got {value!r}.")
+    return float(value)
+
+
 def _compute_thresholds(
     cpoe: pd.Series,
     elite_threshold: Optional[float],
@@ -155,12 +295,60 @@ def _compute_thresholds(
     elite_quantile: float,
     poor_quantile: float,
 ) -> Tuple[float, float]:
-    """Resolves elite/poor CPOE cutoffs."""
+    """Resolves elite/poor CPOE cutoffs and guarantees elite_threshold > poor_threshold."""
     if elite_threshold is None:
-        elite_threshold = float(cpoe.quantile(elite_quantile))
+        elite_threshold = float(cpoe.quantile(_check_quantile(elite_quantile, "elite_quantile")))
     if poor_threshold is None:
-        poor_threshold = float(cpoe.quantile(poor_quantile))
+        poor_threshold = float(cpoe.quantile(_check_quantile(poor_quantile, "poor_quantile")))
+
+    elite_threshold, poor_threshold = float(elite_threshold), float(poor_threshold)
+    if not (np.isfinite(elite_threshold) and np.isfinite(poor_threshold)):
+        raise ValueError(
+            f"CPOE thresholds must be finite (elite={elite_threshold}, poor={poor_threshold})."
+        )
+    if not elite_threshold > poor_threshold:
+        raise ValueError(
+            f"elite_threshold ({elite_threshold:+.4f}) must be strictly greater than "
+            f"poor_threshold ({poor_threshold:+.4f}), otherwise tiers overlap or are ambiguous. "
+            f"With quantile-based cutoffs this happens when elite_quantile <= poor_quantile or "
+            f"when too many rows share the same CPOE (e.g. a single row); pass explicit "
+            f"`elite_threshold` / `poor_threshold` values instead."
+        )
     return elite_threshold, poor_threshold
+
+
+def _scaled_bubble_sizes(volume: pd.Series, base: float = 90.0, span: float = 900.0) -> pd.Series:
+    """Scatter areas scaled linearly by pass volume; rejects non-positive maxima."""
+    vmax = float(volume.max())
+    if not np.isfinite(vmax) or vmax <= 0:
+        raise ValueError("Bubble sizing requires at least one row with total_passes > 0.")
+    return base + (volume / vmax) * span
+
+
+def _adjust_text_is_modern() -> bool:
+    """True for adjustText >= 1.0 (`expand`, `objects`); False for the legacy 0.x API."""
+    params = inspect.signature(adjust_text).parameters
+    return "expand" in params and "expand_points" not in params
+
+
+def _apply_adjust_text(texts, ax, avoid_objects, x=None, y=None) -> None:
+    """Run adjustText with the keyword set matching the installed version (no-op if absent)."""
+    if not texts or not _HAS_ADJUST_TEXT:
+        return
+    arrowprops = dict(arrowstyle="-", color=PALETTE["text_light"],
+                      lw=0.9, alpha=0.8, shrinkA=5, shrinkB=5)
+    if _adjust_text_is_modern():
+        adjust_text(
+            texts, x=x, y=y, ax=ax, objects=avoid_objects,
+            expand=(1.15, 1.35), force_text=(0.3, 0.5), force_static=(0.3, 0.5),
+            arrowprops=arrowprops,
+        )
+    else:
+        adjust_text(
+            texts, x=x, y=y, ax=ax, add_objects=avoid_objects,
+            expand_points=(1.5, 1.7), expand_text=(1.15, 1.25),
+            arrowprops=arrowprops,
+        )
 
 
 def plot_pass_risk_execution(
@@ -177,7 +365,9 @@ def plot_pass_risk_execution(
     legend_anchor: Tuple[float, float] = (0.985, 0.5)
 ) -> plt.Figure:
     """Renders a Risk vs. Execution scatter plot mapping Mean xP against Actual Completion %."""
-    df = player_df[player_df['total_passes'] >= min_passes].copy()
+    df = _prepare_rate_frame(
+        player_df, min_passes, name="player_df", id_col="player_name", entity="players",
+    )
     df['CPOE'] = df['actual_completion_rate'] - df['expected_completion_rate']
 
     elite_threshold, poor_threshold = _compute_thresholds(
@@ -193,7 +383,7 @@ def plot_pass_risk_execution(
     poor = df['CPOE'] <= poor_threshold
     average = ~(elite | poor)
 
-    sizes = 90 + (df['total_passes'] / df['total_passes'].max()) * 900
+    sizes = _scaled_bubble_sizes(df['total_passes'])
 
     plt.rcParams['font.family'] = FONT
     fig, ax = plt.subplots(figsize=(13, 8.8), dpi=300)
@@ -259,7 +449,7 @@ def plot_pass_risk_execution(
     if rows_to_label:
         label_df = pd.concat(rows_to_label).drop_duplicates(subset='player_name')
         for _, row in label_df.iterrows():
-            short_name = shorten_player_name(row['player_name'], name_overrides)
+            short_name = shorten_player_name(str(row['player_name']), name_overrides)
             t = ax.text(
                 row['expected_completion_rate'], row['actual_completion_rate'] + 0.006,
                 short_name, fontsize=10.5, weight="bold", color=PALETTE["text_dark"],
@@ -268,15 +458,7 @@ def plot_pass_risk_execution(
             )
             texts.append(t)
 
-    if texts and _HAS_ADJUST_TEXT:
-        adjust_text(
-            texts, ax=ax,
-            add_objects=[pill_elite, pill_poor],
-            expand_points=(1.5, 1.7),
-            expand_text=(1.15, 1.25),
-            arrowprops=dict(arrowstyle="-", color=PALETTE["text_light"],
-                             lw=0.9, alpha=0.8, shrinkA=5, shrinkB=5),
-        )
+    _apply_adjust_text(texts, ax, [pill_elite, pill_poor])
 
     ax.set_xlim(min_val, max_val)
     ax.set_ylim(min_val, max_val)
@@ -321,12 +503,15 @@ def plot_pass_risk_execution(
                markerfacecolor=PALETTE["poor_fill"], markeredgecolor="white", markeredgewidth=1.2,
                label=f'Underperformer (CPOE ≤ {poor_threshold:+.1%})'),
     ]
-    vol_min, vol_mid, vol_max = df['total_passes'].min(), df['total_passes'].median(), df['total_passes'].max()
+    legend_volumes = pd.Series(
+        [df['total_passes'].min(), df['total_passes'].median(), df['total_passes'].max()], dtype=float
+    )
+    legend_areas = _scaled_bubble_sizes(legend_volumes)
     size_handles = [
         Line2D([0], [0], marker='o', linestyle='', markeredgecolor="white", alpha=0.85,
-               markersize=np.sqrt(90 + (v / df['total_passes'].max()) * 900) * 0.62,
+               markersize=np.sqrt(area) * 0.62,
                markerfacecolor=PALETTE["text_light"], label=f"{int(v):,} passes")
-        for v in (vol_min, vol_mid, vol_max)
+        for v, area in zip(legend_volumes, legend_areas)
     ]
 
     blank = Line2D([], [], linestyle='none', marker='', color='none')
@@ -346,7 +531,208 @@ def plot_pass_risk_execution(
         fontsize=10.5, handletextpad=0.9, labelspacing=0.75, borderpad=1.0,
     )
     combo_legend.set_zorder(Z_LEGEND)
-    
+
+    for i, txt in enumerate(combo_legend.get_texts()):
+        if i in header_rows:
+            txt.set_weight("bold")
+            txt.set_color(PALETTE["text_dark"])
+            txt.set_fontsize(10.5)
+        elif i in spacer_rows:
+            txt.set_text("")
+        else:
+            txt.set_color(PALETTE["text_mid"])
+
+    return fig
+
+
+def plot_team_pass_quadrants(
+    team_df: pd.DataFrame,
+    min_passes: int = 0,
+    elite_threshold: Optional[float] = None,
+    poor_threshold: Optional[float] = None,
+    elite_quantile: float = 0.75,
+    poor_quantile: float = 0.25,
+    label_all: bool = True,
+    legend_anchor: Tuple[float, float] = (1.02, 0.5),
+) -> plt.Figure:
+    """Renders a quadrant scatter: Mean xP (risk) vs. CPOE (execution), bubble size = pass volume."""
+    df = _prepare_rate_frame(
+        team_df, min_passes, name="team_df", id_col="team_name", entity="teams",
+    )
+
+    df['xP'] = df['expected_completion_rate']
+    df['CPOE'] = df['actual_completion_rate'] - df['expected_completion_rate']
+
+    elite_threshold, poor_threshold = _compute_thresholds(
+        df['CPOE'], elite_threshold, poor_threshold, elite_quantile, poor_quantile
+    )
+
+    league_xp = df['xP'].mean()
+    league_cpoe = df['CPOE'].mean()
+
+    x_span = df['xP'].max() - df['xP'].min()
+    x_pad = max(x_span * 0.16, 0.006)
+    min_x, max_x = df['xP'].min() - x_pad, df['xP'].max() + x_pad
+    cap = max(df['CPOE'].abs().max(), 1e-4) * 1.30
+    min_y, max_y = -cap, cap
+
+    elite = df['CPOE'] >= elite_threshold
+    poor = df['CPOE'] <= poor_threshold
+    average = ~(elite | poor)
+
+    sizes = _scaled_bubble_sizes(df['total_passes'])
+
+    plt.rcParams['font.family'] = FONT
+    fig, ax = plt.subplots(figsize=(14, 8.8), dpi=300)
+    fig.patch.set_facecolor(PALETTE["bg_figure"])
+    ax.set_facecolor(PALETTE["bg_axes"])
+    left, right = 0.08, 0.74
+    fig.subplots_adjust(top=0.87, bottom=0.11, left=left, right=right)
+
+    # Vertical CPOE gradient background
+    grid_y = np.linspace(min_y, max_y, 400)
+    ZZ = np.tile(grid_y[:, None], (1, 400))
+    performance_cmap = LinearSegmentedColormap.from_list(
+        "cpoe_gradient", [PALETTE["poor_fill"], "#ffffff", PALETTE["elite_fill"]]
+    )
+    ax.imshow(
+        ZZ, extent=(min_x, max_x, min_y, max_y), origin="lower",
+        cmap=performance_cmap, vmin=-cap, vmax=cap, alpha=0.5,
+        interpolation="bilinear", aspect="auto", zorder=Z_GRADIENT,
+    )
+
+    # Zero line (= actual matches expectation) and league-average crosshairs
+    ax.axhline(0, color=PALETTE["baseline"], linestyle=(0, (5, 3)), linewidth=1.6,
+               alpha=0.9, zorder=Z_GUIDES)
+    ax.axvline(league_xp, color=PALETTE["crosshair"], linestyle=":", linewidth=1.3,
+               zorder=Z_GUIDES, alpha=0.8)
+    ax.axhline(league_cpoe, color=PALETTE["crosshair"], linestyle=":", linewidth=1.3,
+               zorder=Z_GUIDES, alpha=0.8)
+
+    def _pill(x, y, text, color, ha, va):
+        return ax.text(x, y, text, fontsize=10.5, weight="bold", color=color,
+                       ha=ha, va=va, zorder=Z_CALLOUTS, alpha=0.95,
+                       bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
+                                 edgecolor=color, linewidth=1.2, alpha=0.92))
+
+    dx = (max_x - min_x) * 0.012
+    dy = (max_y - min_y) * 0.014
+    pills = [
+        _pill(min_x + dx, max_y - dy, "AGGRESSIVE & EXECUTING\nlow xP · above expectation",
+              PALETTE["elite_fill"], "left", "top"),
+        _pill(max_x - dx, max_y - dy, "SAFE & EXECUTING\nhigh xP · above expectation",
+              PALETTE["elite_fill"], "right", "top"),
+        _pill(min_x + dx, min_y + dy, "AGGRESSIVE & STRUGGLING\nlow xP · below expectation",
+              PALETTE["poor_fill"], "left", "bottom"),
+        _pill(max_x - dx, min_y + dy, "SAFE & STRUGGLING\nhigh xP · below expectation",
+              PALETTE["poor_fill"], "right", "bottom"),
+    ]
+
+    glow_effect = [pe.withStroke(linewidth=2.5, foreground="white", alpha=0.9)]
+
+    for mask, color, alpha, edge, lw, z in (
+        (average, PALETTE["average_fill"], 0.8, PALETTE["average_edge"], 1.1, Z_SCATTER_BG),
+        (poor, PALETTE["poor_fill"], 0.9, "white", 1.4, Z_SCATTER_FG),
+        (elite, PALETTE["elite_fill"], 0.92, "white", 1.4, Z_SCATTER_FG),
+    ):
+        if mask.any():
+            ax.scatter(df.loc[mask, 'xP'], df.loc[mask, 'CPOE'],
+                       s=sizes[mask], color=color, alpha=alpha,
+                       edgecolors=edge, linewidth=lw, zorder=z)
+
+    ax.set_xlim(min_x, max_x)
+    ax.set_ylim(min_y, max_y)
+    fig.canvas.draw()  # finalize transforms so labels can start just above each bubble's edge
+
+    label_df = df if label_all else df[elite | poor]
+    texts = []
+    for idx, row in label_df.iterrows():
+        radius_px = np.sqrt(sizes.loc[idx]) / 2 * fig.dpi / 72
+        px, py = ax.transData.transform((row['xP'], row['CPOE']))
+        _, y_lab = ax.transData.inverted().transform((px, py + radius_px + 2))
+        t = ax.text(
+            row['xP'], y_lab, str(row['team_name']),
+            fontsize=10.5, weight="bold", color=PALETTE["text_dark"],
+            ha="center", va="bottom", zorder=Z_LABELS,
+            path_effects=glow_effect,
+        )
+        texts.append(t)
+
+    # Copies: legacy adjustText mutates x/y in place, and pandas views can be read-only.
+    _apply_adjust_text(texts, ax, pills, x=df['xP'].to_numpy(copy=True), y=df['CPOE'].to_numpy(copy=True))
+
+    ax.set_xlabel('Mean Expected Pass Completion % (xP)  →  safer passes to the right',
+                  fontsize=11.5, weight='bold', color=PALETTE["text_mid"], labelpad=12)
+    ax.set_ylabel('Completion Over Expectation (CPOE)', fontsize=11.5, weight='bold',
+                  color=PALETTE["text_mid"], labelpad=12)
+
+    ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=0))
+    ax.yaxis.set_major_formatter(mtick.FuncFormatter(lambda v, _: f"{v * 100:+.1f}%"))
+    ax.tick_params(colors=PALETTE["text_mid"], labelsize=10)
+
+    ax.grid(True, color=PALETTE["grid"], linestyle="-", linewidth=0.9, alpha=0.35, zorder=Z_GRID)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    for side in ("left", "bottom"):
+        ax.spines[side].set_color(PALETTE["spine"])
+        ax.spines[side].set_linewidth(1.1)
+
+    cx = (left + right) / 2
+    fig.text(cx, 0.945, "Team Pass Risk vs. Execution", fontsize=24, weight="bold",
+             color=PALETTE["text_dark"], ha="center")
+    fig.text(cx, 0.905, "Mean xP vs. Completion Over Expectation (CPOE) — who takes risk, who delivers",
+             fontsize=13, color=PALETTE["text_mid"], ha="center")
+    fig.text(0.96, 0.945, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
+             ha="right", weight="bold")
+    if min_passes > 0:
+        fig.text(0.96, 0.922, f"min. {min_passes:,} passes", fontsize=9.5,
+                 color=PALETTE["text_light"], ha="right")
+
+    fig.text(left, 0.015,
+             "Dashed line: CPOE = 0 (actual = expected)  ·  Dotted lines: league mean xP / CPOE  ·  "
+             "bubble size ∝ total pass volume  ·  background shade ∝ CPOE",
+             fontsize=9.5, color=PALETTE["text_light"], ha="left", style="italic")
+
+    category_handles = [
+        Line2D([0], [0], marker='o', linestyle='', markersize=11,
+               markerfacecolor=PALETTE["elite_fill"], markeredgecolor="white", markeredgewidth=1.2,
+               label=f'Elite (CPOE ≥ {elite_threshold:+.1%})'),
+        Line2D([0], [0], marker='o', linestyle='', markersize=11,
+               markerfacecolor=PALETTE["average_fill"], markeredgecolor="white", markeredgewidth=1.2,
+               label='Within expectation'),
+        Line2D([0], [0], marker='o', linestyle='', markersize=11,
+               markerfacecolor=PALETTE["poor_fill"], markeredgecolor="white", markeredgewidth=1.2,
+               label=f'Under (CPOE ≤ {poor_threshold:+.1%})'),
+    ]
+    legend_volumes = pd.Series(
+        [df['total_passes'].min(), df['total_passes'].median(), df['total_passes'].max()], dtype=float
+    )
+    legend_areas = _scaled_bubble_sizes(legend_volumes)
+    size_handles = [
+        Line2D([0], [0], marker='o', linestyle='', markeredgecolor="white", alpha=0.85,
+               markersize=np.sqrt(area) * 0.62,
+               markerfacecolor=PALETTE["text_light"], label=f"{int(v):,} passes")
+        for v, area in zip(legend_volumes, legend_areas)
+    ]
+
+    blank = Line2D([], [], linestyle='none', marker='', color='none')
+    combo_handles = [blank] + category_handles + [blank] + [blank] + size_handles
+    combo_labels = (
+        ["PERFORMANCE TIER"] + [h.get_label() for h in category_handles]
+        + [""] + ["TOTAL PASS VOLUME"] + [h.get_label() for h in size_handles]
+    )
+    header_rows = {0, 5}
+    spacer_rows = {4}
+
+    combo_legend = ax.legend(
+        combo_handles, combo_labels,
+        loc='center left', bbox_to_anchor=legend_anchor,
+        frameon=True, fancybox=True, framealpha=0.94,
+        facecolor=PALETTE["legend_face"], edgecolor=PALETTE["spine"],
+        fontsize=10, handletextpad=0.9, labelspacing=0.75, borderpad=1.0,
+    )
+    combo_legend.set_zorder(Z_LEGEND)
+
     for i, txt in enumerate(combo_legend.get_texts()):
         if i in header_rows:
             txt.set_weight("bold")
@@ -374,19 +760,17 @@ COMPLETE_COLOR = "#10b981"
 FAILED_COLOR = "#ef4444"
 
 
-def _check_columns(df: pd.DataFrame, required: list[str], name: str) -> None:
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise KeyError(f"`{name}` is missing required columns: {missing}")
-
-
 def _prepare_pva(pva_df: pd.DataFrame) -> pd.DataFrame:
     """Validate and clean the per-player PVA summary."""
     _check_columns(pva_df, PVA_REQUIRED_COLUMNS, "pva_df")
-    pva_df = pva_df.copy()
-    for col in ["total_passes", "total_pva"]:
-        pva_df[col] = pd.to_numeric(pva_df[col], errors="coerce")
-    return pva_df.dropna(subset=["player_name", "total_passes", "total_pva"])
+    pva_df = _to_numeric_strict(pva_df, ["total_passes", "total_pva"], "pva_df")
+
+    n_before = len(pva_df)
+    pva_df = pva_df.dropna(subset=["player_name", "total_passes", "total_pva"])
+    _warn_dropped(n_before - len(pva_df), "pva_df")
+
+    _require_non_negative_passes(pva_df, "pva_df")
+    return pva_df
 
 
 def _prepare_passes(passes_df: pd.DataFrame) -> pd.DataFrame:
@@ -394,18 +778,31 @@ def _prepare_passes(passes_df: pd.DataFrame) -> pd.DataFrame:
     _check_columns(passes_df, PASS_REQUIRED_COLUMNS, "passes_df")
     passes_df = passes_df.copy()
 
-    numeric_cols = ["start_x", "start_y", "end_x", "end_y", "pass_outcome", "xP"]
-    for col in numeric_cols:
-        passes_df[col] = pd.to_numeric(passes_df[col], errors="coerce")
+    numeric_cols = ["start_x", "start_y", "end_x", "end_y", "xP"]
+    passes_df = _to_numeric_strict(passes_df, numeric_cols, "passes_df")
+    passes_df = _to_numeric_strict(
+        passes_df, ["pass_outcome"], "passes_df", hint=PASS_OUTCOME_CONTRACT
+    )
 
-    passes_df = passes_df.dropna(subset=["player_name"] + numeric_cols)
-    
-    # Validation: Ensure pass outcome is strictly binary
-    if not set(passes_df["pass_outcome"].unique()).issubset({0, 1}):
-        raise ValueError("pass_outcome must contain only binary values (0 or 1).")
-        
+    n_before = len(passes_df)
+    passes_df = passes_df.dropna(subset=["player_name"] + numeric_cols + ["pass_outcome"])
+    _warn_dropped(n_before - len(passes_df), "passes_df")
+    if passes_df.empty:
+        raise ValueError("`passes_df` has no usable rows after removing rows with missing values.")
+
+    # Validation: pass outcome is strictly binary (1 = completed, 0 = incomplete/failed).
+    invalid_outcome = ~passes_df["pass_outcome"].isin([0, 1])
+    if invalid_outcome.any():
+        bad_values = sorted(passes_df.loc[invalid_outcome, "pass_outcome"].unique().tolist())[:5]
+        raise ValueError(
+            f"`passes_df['pass_outcome']` contains unsupported values {bad_values}. "
+            f"{PASS_OUTCOME_CONTRACT} Other values are not reinterpreted; recode them upstream."
+        )
+
+    _validate_rate_columns(passes_df, ["xP"], "passes_df")
+
     passes_df["pass_outcome"] = passes_df["pass_outcome"].astype(int)
-    return passes_df
+    return passes_df.reset_index(drop=True)
 
 
 def _select_top_player(
@@ -414,7 +811,7 @@ def _select_top_player(
     """Return (player_name, total_pva) for the highest total_pva player."""
     if pva_df.duplicated(subset=["player_name"]).any():
         raise ValueError("pva_df must be a pre-aggregated per-player summary without duplicate player names.")
-        
+
     summary = pva_df.set_index("player_name")
     summary = summary[summary.index.isin(passes_df["player_name"].unique())]
     eligible = summary[summary["total_passes"] >= min_passes]
@@ -446,6 +843,15 @@ def plot_top_player_pass_map(
     player_df = pass_data[pass_data["player_name"] == player_name].copy()
 
     n_passes = len(player_df)
+    summary_passes = float(pva_data.loc[pva_data["player_name"] == player_name, "total_passes"].iloc[0])
+    if n_passes != summary_passes:
+        warnings.warn(
+            f"{player_name}: `pva_df` reports {summary_passes:g} passes but `passes_df` has "
+            f"{n_passes} usable pass rows; the map and the PVA summary may not cover the same passes.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     actual_pct = player_df["pass_outcome"].mean() * 100
     expected_pct = player_df["xP"].mean() * 100
     cpoe = actual_pct - expected_pct
