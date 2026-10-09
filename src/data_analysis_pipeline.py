@@ -22,6 +22,12 @@ def process_match_json(file_path):
         match_data = json.load(f)
     df = pd.DataFrame(match_data)
 
+    # StatsBomb leaves optional keys out of an event instead of setting them to null, so a
+    # match where no event has one (e.g. nobody is ever under pressure) has no such column
+    for optional_col in ('shot', 'under_pressure'):
+        if optional_col not in df.columns:
+            df[optional_col] = None
+
     # Files are named <match_id>.json
     match_id = os.path.basename(file_path).replace('.json', '')
     df['match_id'] = match_id

@@ -1,0 +1,11 @@
+# Tested with Python 3.13.14
+adjustText==1.4.0
+joblib==1.5.3
+matplotlib==3.10.7
+mplsoccer==1.6.1
+numpy==2.3.4
+pandas==3.0.3
+requests==2.34.2
+scikit-learn==1.9.0
+shap==0.52.0
+xgboost==3.3.0

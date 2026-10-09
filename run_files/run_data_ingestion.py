@@ -25,7 +25,25 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.data_ingestion_pipeline import download_statsbomb_free_data
+from src.naming import find_subfolder
 from src import console
+
+
+def local_scope_dir(target_dir: str, league: str = None, season: str = None):
+    """
+    Returns the local folder that holds the requested league / season, or target_dir itself
+    when no scope is given. Returns a path that doesn't exist if nothing matches, so a glob
+    inside it finds no files.
+    """
+    scope_dir = target_dir
+    for wanted in (league, season):
+        if not wanted:
+            break
+        match = find_subfolder(scope_dir, wanted)
+        if match is None:
+            return os.path.join(scope_dir, wanted)
+        scope_dir = os.path.join(scope_dir, match)
+    return scope_dir
 
 
 def parse_args():
@@ -60,13 +78,13 @@ def main():
         sys.exit(1)
 
     except ConnectionError as e:
-        # Being offline is fine as long as there is already local data to work with
-        local_files = glob.glob(os.path.join(target_dir, "**", "*.json"), recursive=True)
+        # Being offline is fine as long as there is already local data for the requested scope
+        local_files = glob.glob(os.path.join(local_scope_dir(target_dir, args.league, args.season), "**", "*.json"), recursive=True)
         if local_files:
             console.warn(f"{e} Continuing with {len(local_files):,} local match files.")
             console.done("Data ingestion skipped (offline)")
             return
-        console.error(f"{e} Check your internet connection.")
+        console.error(f"{e} No local match files for {console.describe_scope(args.league, args.season)}. Check your internet connection.")
         sys.exit(1)
 
     console.section("Summary")

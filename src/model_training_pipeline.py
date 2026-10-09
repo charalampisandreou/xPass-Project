@@ -389,6 +389,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     # 3. Compare both models on the held-out test set. Log-loss and Brier score measure how
     #    good the probabilities are (lower is better). ROC AUC and accuracy are recorded too,
     #    but probabilities are what xP is built on.
+    console.info("Evaluating both models on the hold-out test set...")
     raw_probs = xgb_standalone.predict_proba(X_test)[:, 1]
     cal_probs = calibrated_model.predict_proba(X_test)[:, 1]
 
@@ -472,6 +473,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
 
         console.section("Model diagnostics")
 
+        console.info("Drawing the reliability diagram...")
         raw_cal_curve = calibration_curve(y_test, raw_probs, n_bins = 10)
         cal_cal_curve = calibration_curve(y_test, cal_probs, n_bins = 10)
         fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name, models_dir = models_dir)
@@ -487,6 +489,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         else:
             base_estimator = final_model
 
+        console.info(f"Calculating SHAP values for {len(X_shap):,} test passes...")
         fig_shap_diagram(base_estimator, models_dir, X_shap, model_name)
 
         console.success("Diagnostics complete")

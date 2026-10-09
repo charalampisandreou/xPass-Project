@@ -13,9 +13,13 @@
 /*
 
 !/.gitignore
+!/README.md
+!/LICENSE
+!/requirements.txt
 !/run_all.py
 !/run_files/
 !/src/
+!/docs/
 
 # Local-only content stays out by default:
 #   data/       raw StatsBomb downloads and processed datasets (~9 GB)
@@ -40,6 +44,9 @@ __pycache__/
 *.pkl
 *.onnx
 *.png
+
+# Exception: figures used by the README live in docs/
+!/docs/*.png
 
 # Jupyter checkpoints
 .ipynb_checkpoints/

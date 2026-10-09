@@ -23,14 +23,18 @@ REQUEST_TIMEOUT = 30  # seconds; stops a stalled connection from hanging the pip
 
 
 def _get_json(url: str):
-    """GETs a JSON file. Returns None on any network error or non-200 response."""
+    """GETs a JSON file. Returns None on any network error, non-200 response or invalid JSON."""
     try:
         response = requests.get(url, timeout=REQUEST_TIMEOUT)
     except requests.RequestException:
         return None
     if response.status_code != 200:
         return None
-    return response.json()
+    # A proxy or captive portal can answer 200 with an HTML page instead of the JSON file
+    try:
+        return response.json()
+    except ValueError:
+        return None
 
 
 def download_statsbomb_free_data(target_dir: str = "data/raw/statsbomb_free", league: str = None, season: str = None):
@@ -106,8 +110,12 @@ def download_statsbomb_free_data(target_dir: str = "data/raw/statsbomb_free", le
                 events = _get_json(f"{BASE_URL}/events/{match_id}.json")
 
                 if events is not None:
-                    with open(match_path, 'w', encoding = 'utf-8') as f:
+                    # Write to a temporary file and rename it into place, so an interrupted
+                    # write never leaves a truncated <match_id>.json that later runs would skip
+                    tmp_path = match_path + ".part"
+                    with open(tmp_path, 'w', encoding = 'utf-8') as f:
                         json.dump(events, f)
+                    os.replace(tmp_path, match_path)
                     total_downloaded += 1
                     new_files += 1
                     # Short pause between downloads to be polite to GitHub's servers

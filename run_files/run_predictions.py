@@ -123,10 +123,12 @@ def main():
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
     console.section("Calculating xP")
+    console.info("Loading the dataset and model, then evaluating every pass...")
     df = calculate_xp(csv_path, model_path, features)
     console.success(f"Calculated xP for {len(df):,} passes")
 
     console.section("Saving outputs")
+    console.info(f"Writing {len(df):,} rows to CSV...")
     df.to_csv(output_path, index = False)
     console.success(f"Saved xP dataset: {os.path.basename(output_path)}")
 

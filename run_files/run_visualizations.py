@@ -194,8 +194,9 @@ def main():
     model_label = deployed_model_label(latest_model_dir)
     console.info(f"Model: {os.path.basename(latest_model_dir)}" + (f" ({model_label})" if model_label else ""))
 
-    pre_df = pd.read_csv(latest_pre)
     console.info(f"Dataset: {os.path.basename(latest_pre)}")
+    console.info("Loading passes...")
+    pre_df = pd.read_csv(latest_pre)
 
     status_tag = extract_tags(latest_pre)
 
@@ -238,6 +239,7 @@ def main():
             sys.exit(1)
 
         # Re-aggregate for this scope only, since the saved post-analysis files cover the whole dataset
+        console.info("Aggregating players and teams for this scope...")
         post_player_df = player_analysis(pre_df)
         post_team_df = team_analysis(pre_df)
         status_tag = f"{league}_{season or 'all-seasons'}".replace("'", "").replace(" ", "-")
@@ -280,6 +282,7 @@ def main():
         console.info(f"Minimum passes per player lowered to {min_passes} for this scope (normally {DEFAULT_MIN_PASSES}).")
 
     console.section("Drawing figures")
+    console.info("Drawing 4 figures...")
 
     fig_leaderboard_table = draw_leaderboard_table(post_player_df, min_passes=min_passes, model_label=model_label)
     console.success("Drew player leaderboard table")
@@ -300,6 +303,7 @@ def main():
     date_str = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
 
     console.section("Saving outputs")
+    console.info("Writing figures to PNG...")
 
     leaderboard_output_path = os.path.join(output_dir, f"player_leaderboard_table_{status_tag}_{date_str}.png")
     fig_leaderboard_table.savefig(leaderboard_output_path)

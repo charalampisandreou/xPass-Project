@@ -74,6 +74,7 @@ def main():
 
     latest_csv = max(csv_files, key = os.path.getctime)
     console.info(f"Dataset: {os.path.basename(latest_csv)}")
+    console.info("Loading passes...")
     df = pd.read_csv(latest_csv)
     console.success(f"Loaded {len(df):,} passes · {len(df.columns)} columns")
 
