@@ -1,3 +1,19 @@
+"""
+Step 5 · Post-Analysis
+
+Aggregates the per-pass xP dataset into one summary table per player and one per team:
+passes attempted and completed, total xP, total pass value added (PVA), actual and
+expected completion rates, and completion percentage over expected (CPOE = actual - expected).
+
+The newest xP dataset is used, and both tables are saved next to it:
+
+    models/final/model_<timestamp>/datasets/post analysis/
+        player_analysis_<tag>_<timestamp>.csv
+        team_analysis_<tag>_<timestamp>.csv
+
+Usage:
+    python run_files/run_post_analysis.py
+"""
 import os
 import sys
 import glob
@@ -8,14 +24,21 @@ import re
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, ".."))
 
+# Make the `src` package importable when this file is run directly as a script
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from src.post_analysis_pipeline import player_analysis, team_analysis
+from src import console
 
 def extract_tags(csv_path: str) -> str:
     """
-    Extracts the league/season identifier from input filenames.
+    Returns the league/season part of an xP dataset's filename, so the summary files
+    can carry the same tag. For example:
+
+        xp_added_passes_La-Liga_2015-2016_09-10-2026_18-02-41.csv  ->  "La-Liga_2015-2016"
+
+    Falls back to "all_matches" if nothing is left after removing the prefix and timestamp.
     """
     filename = os.path.basename(csv_path)
 
@@ -24,45 +47,47 @@ def extract_tags(csv_path: str) -> str:
     if base.startswith("xp_added_passes_"):
         base = base[len("xp_added_passes_"):]
 
-    #Strip datetime pattern
-    cleaned = re.sub(r'_\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$', '', base)
+    # Remove the trailing "_DD-MM-YYYY_HH-MM-SS" timestamp. The underscore is optional
+    # because a file made without --league has nothing but the timestamp after its prefix.
+    cleaned = re.sub(r'_?\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2}$', '', base)
 
     return cleaned if cleaned else "all_matches"
 
 
 
 def main():
-    print("Starting Post-Analysis Processing...\n")
+    console.header("Post-Analysis · player & team aggregates")
 
-    # Load the latest processed dataset
+    # Find the newest xP dataset across all model folders
     csv_pattern = os.path.join(PROJECT_ROOT, "models", "final", "*", "datasets", "pre analysis", "xp_added_passes_*.csv")
 
     csv_files = glob.glob(csv_pattern)
 
+    # If no model folder has one, fall back to an xP dataset placed in data/processed
     if not csv_files:
         csv_pattern = os.path.join(PROJECT_ROOT, "data", "processed", "xp_added_passes_*.csv")
         csv_files = glob.glob(csv_pattern)
 
     if not csv_files:
-        print("Error: No processed pass datasets found in models/final or data/processed directory.")
-        return
+        console.error("No xP datasets found in models/final. Run run_predictions.py first.")
+        sys.exit(1)
 
     latest_csv = max(csv_files, key = os.path.getctime)
-    print(f"Loading the latest dataset: {latest_csv}")
+    console.info(f"Dataset: {os.path.basename(latest_csv)}")
     df = pd.read_csv(latest_csv)
-    print(f"Dataset successfully loaded: {len(df)} passes across {len(df.columns)} columns.")
+    console.success(f"Loaded {len(df):,} passes · {len(df.columns)} columns")
 
-    # Perform player analysis
-    print("\nPerforming player analysis...")
+    console.section("Player analysis")
     player_df = player_analysis(df)
+    console.success(f"{len(player_df):,} players aggregated")
 
-    # Perform team analysis
-    print("\nPerforming team analysis...")
+    console.section("Team analysis")
     team_df = team_analysis(df)
+    console.success(f"{len(team_df):,} teams aggregated")
 
-    # Save the results
-    print("\nSaving the post analysis datasets...")
+    console.section("Saving outputs")
 
+    # The summaries go in ".../datasets/post analysis", alongside the "pre analysis" folder they came from
     pre_analysis_dir = os.path.dirname(latest_csv)
     model_dataset_dir = os.path.dirname(pre_analysis_dir)
     output_dir = os.path.join(model_dataset_dir, "post analysis")
@@ -74,17 +99,17 @@ def main():
     team_output_path = os.path.join(output_dir, f"team_analysis_{status_tag}_{date_str}.csv")
 
     player_df.to_csv(player_output_path, index = False)
-    print(f"Player analysis dataset saved to: {player_output_path}")
+    console.success(f"Saved player analysis: {os.path.basename(player_output_path)}")
 
     team_df.to_csv(team_output_path, index = False)
-    print(f"Team analysis dataset saved to: {team_output_path}")
+    console.success(f"Saved team analysis: {os.path.basename(team_output_path)}")
 
-    print("\n[SUCCESS]: Post-Analysis Processing Completed Successfully.")
+    console.section("Summary")
+    console.kv("Players", f"{len(player_df):,}")
+    console.kv("Teams", f"{len(team_df):,}")
+    console.kv("Saved to", os.path.relpath(output_dir, PROJECT_ROOT))
+
+    console.done("Post-analysis complete")
 
 if __name__ == "__main__":
     main()
-
-
-
-
-

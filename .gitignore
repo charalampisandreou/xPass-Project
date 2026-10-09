@@ -1,46 +1,51 @@
-# ------------------------------------------------------------
-# Whitelist approach: ignore everything at the repo root,
-# then explicitly allow only what should be on GitHub.
-# ------------------------------------------------------------
+# =============================================================================
+# xPass .gitignore: allow-list
+#
+# Everything in the repository root is ignored, except the entries listed in
+# section 1. To publish a new top-level file or folder (for example a README),
+# add a matching "!" line there.
+# =============================================================================
 
-# Ignore everything at the repo root
+
+# -----------------------------------------------------------------------------
+# 1. Repository root: ignore everything except these
+# -----------------------------------------------------------------------------
 /*
 
-# Allow only these
 !/.gitignore
-!/src/
+!/run_all.py
 !/run_files/
+!/src/
 
-# Optional: uncomment if you add these later
-# !/README.md
-# !/requirements.txt
+# Local-only content stays out by default:
+#   data/       raw StatsBomb downloads and processed datasets (~9 GB)
+#   models/     trained models, reports, datasets and figures
+#   notebooks/, Learning/, project-history.txt, virtual environments, ...
 
-# ------------------------------------------------------------
-# Junk to ignore inside the allowed folders
-# ------------------------------------------------------------
 
-# Byte-compiled / optimized / DLL files
+# -----------------------------------------------------------------------------
+# 2. Inside the allowed folders: generated files that should never be committed
+# -----------------------------------------------------------------------------
+
+# Python bytecode and caches
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints/
-
-# Virtual environments
-venv/
-.venv/
-env/
-
-# OS / IDE junk
-.DS_Store
-Thumbs.db
-.vscode/
-
-# Data files and serialized artifacts (in case any end up in src/ or run_files/)
+# Data and model artifacts, in case one is saved next to the code by mistake
 *.json
 *.csv
 *.parquet
 *.joblib
 *.pkl
 *.onnx
+*.png
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# Editor and operating system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

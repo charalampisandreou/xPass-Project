@@ -1,31 +1,26 @@
+"""
+Applies a trained xPass model to a processed pass dataset.
+"""
 import pandas as pd
 import joblib
 
-FEAT_TRUEBEST = [
-    'start_x',
-    'start_y',
-    'pass_angle',
-    'dist_to_goal',
-    'height_Low Pass',
-    'height_High Pass',
-    'body_part_Foot',
-    'body_part_Head',
-    'body_part_Keeper Arm',
-    'play_pattern_Regular Play',
-    'play_pattern_Kick Off',
-    'play_pattern_Throw In',
-    'play_pattern_Free Kick',
-    'play_pattern_Goal Kick',
-    'play_pattern_Keeper',
-    'play_pattern_Corner',
-    'under_pressure'
-]
+from src.features import FEAT_TRUEBEST
+
 
 def calculate_xp(df_path: str, model_path: str, features: list = FEAT_TRUEBEST):
+    """
+    Loads a processed pass dataset and a saved model, and returns the dataset with two new columns:
+
+        xP    predicted probability that the pass is completed
+        PVA   pass value added: pass_outcome (1 = completed, 0 = failed) minus xP
+
+    `features` must be the same columns, in the same order, that the model was trained on.
+    """
     df = pd.read_csv(df_path)
     model = joblib.load(model_path)
 
     X = df[features]
+    # predict_proba returns [P(failed), P(completed)] for each pass; keep P(completed)
     df['xP'] = model.predict_proba(X)[:, 1]
     df['PVA'] = df['pass_outcome'] - df['xP']
 

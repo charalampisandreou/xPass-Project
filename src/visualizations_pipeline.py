@@ -1,3 +1,20 @@
+"""
+The four xPass figures, each returned as a matplotlib Figure for the caller to save:
+
+    draw_leaderboard_table     top players by total pass value added (PVA)
+    plot_pass_risk_execution   per player: mean xP (how risky their passing is) against
+                               actual completion %, coloured by CPOE tier
+    plot_team_pass_quadrants   per team: mean xP against CPOE,
+                               split into four quadrants around the league averages
+    plot_top_player_pass_map   every pass by the top-PVA player, drawn on the pitch
+
+The summary tables are validated strictly before plotting: rates must be proportions in
+[0, 1] and pass counts non-negative, and nothing is clipped or coerced silently. Bad
+input fails with a message that names the offending column.
+
+CPOE (completion percentage over expected) is the actual completion rate minus mean xP.
+Positive means more passes were completed than their difficulty would suggest.
+"""
 from __future__ import annotations
 
 import inspect
@@ -13,6 +30,8 @@ from matplotlib.lines import Line2D
 from matplotlib.figure import Figure
 from mplsoccer import Pitch
 
+# adjustText nudges overlapping name labels apart. It's optional: without it the
+# labels are simply drawn where they are.
 try:
     from adjustText import adjust_text
     _HAS_ADJUST_TEXT = True
@@ -31,6 +50,7 @@ PASS_OUTCOME_CONTRACT = (
 
 
 def _check_columns(df: pd.DataFrame, required: list[str], name: str) -> None:
+    """Raises KeyError naming any required columns that `df` doesn't have."""
     missing = [c for c in required if c not in df.columns]
     if missing:
         raise KeyError(f"`{name}` is missing required columns: {missing}")
@@ -60,6 +80,7 @@ def _to_numeric_strict(df: pd.DataFrame, cols, name: str, hint: str = "") -> pd.
 
 
 def _require_no_missing(df: pd.DataFrame, cols, name: str, hint: str = "") -> None:
+    """Raises ValueError if any of `cols` contains missing values."""
     for col in cols:
         n_missing = int(df[col].isna().sum())
         if n_missing:
@@ -67,6 +88,7 @@ def _require_no_missing(df: pd.DataFrame, cols, name: str, hint: str = "") -> No
 
 
 def _require_non_negative_passes(df: pd.DataFrame, name: str) -> None:
+    """Raises ValueError if any `total_passes` value is negative."""
     negative = df["total_passes"] < 0
     if negative.any():
         raise ValueError(
@@ -91,6 +113,7 @@ def _validate_rate_columns(df: pd.DataFrame, cols, name: str, missing_hint: str 
 
 
 def _warn_dropped(n_dropped: int, name: str) -> None:
+    """Warns that rows were dropped, so missing data never disappears without a trace."""
     if n_dropped:
         warnings.warn(
             f"`{name}`: dropped {n_dropped} row(s) with missing values in required columns.",
@@ -145,12 +168,24 @@ def _prepare_rate_frame(
     return filtered
 
 
+# --------------------------------------------------------------------------- #
+# Leaderboard table
+# --------------------------------------------------------------------------- #
+
 def draw_leaderboard_table(
     player_df: pd.DataFrame,
     top_n: int = 10,
-    min_passes: int = 300
+    min_passes: int = 300,
+    model_label: Optional[str] = None,
 ) -> plt.Figure:
-    """Renders a dark-slate scouting leaderboard table."""
+    """
+    Renders a table of the `top_n` players with the highest total PVA, among players
+    with at least `min_passes` passes. The top three rows are highlighted.
+
+    `model_label` (e.g. "Calibrated XGBoost") is shown in the subtitle when given.
+
+    Columns: rank, player, passes, actual completion %, mean xP, CPOE and total PVA.
+    """
     if top_n < 1:
         raise ValueError("top_n must be at least 1.")
 
@@ -160,6 +195,7 @@ def draw_leaderboard_table(
         entity="players", extra_numeric=extra,
     )
 
+    # CPOE is computed here if the summary doesn't already include it
     if 'CPOE' not in df.columns:
         df['CPOE'] = df['actual_completion_rate'] - df['expected_completion_rate']
 
@@ -215,6 +251,8 @@ def draw_leaderboard_table(
     table.auto_set_font_size(False)
     table.set_fontsize(11)
 
+    # Style the header row, then align the body: rank centred, names left, numbers right,
+    # and the PVA column (the ranking metric) in bold green
     for (row_idx, col_idx), cell in table.get_celld().items():
         if row_idx == 0:
             cell.set_text_props(weight='bold', color='white', fontsize=12, fontname='DejaVu Sans')
@@ -237,15 +275,23 @@ def draw_leaderboard_table(
         f'Top {len(top_players)} Playmakers by Pass Value Added (PVA)',
         ha='center', va='center', fontsize=20, weight='bold', color='#0f172a', fontname='DejaVu Sans'
     )
+    subtitle = f'Minimum Threshold: {min_passes} Passes'
+    if model_label:
+        subtitle += f'  |  Model: {model_label}'
     fig.text(
         0.5, 0.91,
-        f'Minimum Threshold: {min_passes} Passes  |  Model: Calibrated XGBoost',
+        subtitle,
         ha='center', va='center', fontsize=12, color='#64748b', fontname='DejaVu Sans'
     )
 
     return fig
 
 
+# --------------------------------------------------------------------------- #
+# Shared styling for the two scatter charts
+# --------------------------------------------------------------------------- #
+
+# Green = above expectation, red = below, grey = in between
 PALETTE = {
     "bg_figure":     "#ffffff",
     "bg_axes":       "#f6f8fb",
@@ -265,6 +311,7 @@ PALETTE = {
 
 FONT = "DejaVu Sans"
 
+# Drawing order (matplotlib zorder), from the background up to the legend
 Z_GRADIENT = 0
 Z_GRID = 1
 Z_GUIDES = 2
@@ -276,13 +323,14 @@ Z_LEGEND = 20
 
 
 def shorten_player_name(full_name: str, name_overrides: Optional[Dict[str, str]] = None) -> str:
-    """Returns a short display name for a player."""
+    """Returns a short label for a player: an override if one is given, otherwise the surname."""
     if name_overrides and full_name in name_overrides:
         return name_overrides[full_name]
     return full_name.split()[-1]
 
 
 def _check_quantile(value: float, label: str) -> float:
+    """Validates that a quantile is a number between 0 and 1 and returns it as a float."""
     if not (np.isfinite(value) and 0.0 <= value <= 1.0):
         raise ValueError(f"{label} must be a number between 0 and 1, got {value!r}.")
     return float(value)
@@ -295,7 +343,12 @@ def _compute_thresholds(
     elite_quantile: float,
     poor_quantile: float,
 ) -> Tuple[float, float]:
-    """Resolves elite/poor CPOE cutoffs and guarantees elite_threshold > poor_threshold."""
+    """
+    Returns the (elite, poor) CPOE cutoffs that split entities into three tiers.
+
+    Explicit thresholds are used as given. Otherwise they are taken from the data:
+    by default the top quarter of CPOE is "elite" and the bottom quarter is "poor".
+    """
     if elite_threshold is None:
         elite_threshold = float(cpoe.quantile(_check_quantile(elite_quantile, "elite_quantile")))
     if poor_threshold is None:
@@ -318,7 +371,7 @@ def _compute_thresholds(
 
 
 def _scaled_bubble_sizes(volume: pd.Series, base: float = 90.0, span: float = 900.0) -> pd.Series:
-    """Scatter areas scaled linearly by pass volume; rejects non-positive maxima."""
+    """Bubble areas that grow linearly with pass volume, from `base` up to `base + span`."""
     vmax = float(volume.max())
     if not np.isfinite(vmax) or vmax <= 0:
         raise ValueError("Bubble sizing requires at least one row with total_passes > 0.")
@@ -351,6 +404,10 @@ def _apply_adjust_text(texts, ax, avoid_objects, x=None, y=None) -> None:
         )
 
 
+# --------------------------------------------------------------------------- #
+# Player risk vs. execution scatter
+# --------------------------------------------------------------------------- #
+
 def plot_pass_risk_execution(
     player_df: pd.DataFrame,
     min_passes: int = 300,
@@ -359,12 +416,26 @@ def plot_pass_risk_execution(
     elite_quantile: float = 0.75,
     poor_quantile: float = 0.25,
     label_elite: bool = True,
+    label_elite_n: Optional[int] = 10,
     label_poor_n: int = 3,
     label_average: bool = False,
     name_overrides: Optional[Dict[str, str]] = None,
-    legend_anchor: Tuple[float, float] = (0.985, 0.5)
+    legend_anchor: Tuple[float, float] = (0.985, 0.5),
+    model_label: Optional[str] = None,
 ) -> plt.Figure:
-    """Renders a Risk vs. Execution scatter plot mapping Mean xP against Actual Completion %."""
+    """
+    Plots each player's mean xP (x) against their actual completion % (y).
+    `model_label` (e.g. "Calibrated XGBoost") is named in the footnote when given.
+
+    The dashed diagonal is "completed exactly as many passes as expected". Players above it
+    beat the model, players below it fall short, and the vertical distance from the line
+    is their CPOE. Moving right means safer passes on average, so players in the top-left
+    attempt difficult passes and still complete them.
+
+    Bubbles are sized by pass volume and coloured by tier: elite (CPOE in the top quarter
+    by default), poor (bottom quarter) or average. Labels go to the `label_elite_n` best
+    elite players and the `label_poor_n` worst underperformers.
+    """
     df = _prepare_rate_frame(
         player_df, min_passes, name="player_df", id_col="player_name", entity="players",
     )
@@ -391,6 +462,8 @@ def plot_pass_risk_execution(
     ax.set_facecolor(PALETTE["bg_axes"])
     fig.subplots_adjust(top=0.89, bottom=0.11, left=0.08, right=0.96)
 
+    # Background shading: actual minus expected at every point of the chart, so the colour
+    # itself shows CPOE (green above the diagonal, red below)
     cap = max_val - min_val
     grid_res = np.linspace(min_val, max_val, 400)
     XX, YY = np.meshgrid(grid_res, grid_res)
@@ -413,11 +486,13 @@ def plot_pass_risk_execution(
     ax.axhline(league_actual, color=PALETTE["crosshair"], linestyle=":", linewidth=1.3, zorder=Z_GUIDES, alpha=0.8)
 
     def _pill(x, y, text, color, ha, va):
+        """Bold text in a rounded white box, used for the corner callouts."""
         return ax.text(x, y, text, fontsize=10.5, weight="bold", color=color,
                         ha=ha, va=va, zorder=Z_CALLOUTS, alpha=0.95,
                         bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
                                   edgecolor=color, linewidth=1.2, alpha=0.92))
 
+    # Callouts in the two corners that explain what each region of the chart means
     pill_elite = _pill(min_val + 0.012, max_val - 0.012, "HIGH RISK / OVERPERFORMANCE\nlow xP · high actual",
                         PALETTE["elite_fill"], "left", "top")
     pill_poor = _pill(max_val - 0.012, min_val + 0.012, "LOW RISK / UNDERPERFORMANCE\nhigh xP · low actual",
@@ -437,9 +512,13 @@ def plot_pass_risk_execution(
                s=sizes[elite], color=PALETTE["elite_fill"], alpha=0.92,
                edgecolors="white", linewidth=1.4, zorder=Z_SCATTER_FG)
 
+    # Decide which players get a name label
     rows_to_label = []
     if label_elite:
-        rows_to_label.append(df[elite])
+        # Cap the labels: on multi-league datasets there can be hundreds of elite players,
+        # which makes the chart unreadable and adjustText's pairwise overlap check run out of memory.
+        elite_rows = df[elite] if label_elite_n is None else df[elite].nlargest(label_elite_n, 'CPOE')
+        rows_to_label.append(elite_rows)
     if label_poor_n > 0:
         rows_to_label.append(df[poor].nsmallest(label_poor_n, 'CPOE'))
     if label_average:
@@ -481,14 +560,15 @@ def plot_pass_risk_execution(
 
     fig.text(0.52, 0.97, "Pass Risk vs. Execution", fontsize=24, weight="bold",
               color=PALETTE["text_dark"], ha="center")
-    fig.text(0.52, 0.935, "Completion Over Expectation (CPOE) — who beats their model, and by how much",
+    fig.text(0.52, 0.935, "Completion Percentage Over Expected (CPOE) — who beats their model, and by how much",
               fontsize=13, color=PALETTE["text_mid"], ha="center")
     fig.text(0.96, 0.97, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
               ha="right", weight="bold")
     fig.text(0.96, 0.948, f"min. {min_passes} passes", fontsize=9.5, color=PALETTE["text_light"], ha="right")
 
+    model_note = f"Model: {model_label}  ·  " if model_label else ""
     fig.text(0.08, 0.015,
-              "Dashed line: y = x (expected completion)  ·  Model: calibrated XGBoost expected-completion model  ·  "
+              f"Dashed line: y = x (expected completion)  ·  {model_note}"
               "bubble size ∝ total pass volume  ·  background shade ∝ CPOE",
               fontsize=9.5, color=PALETTE["text_light"], ha="left", style="italic")
 
@@ -520,6 +600,9 @@ def plot_pass_risk_execution(
         ["PERFORMANCE TIER"] + [h.get_label() for h in category_handles]
         + [""] + ["TOTAL PASS VOLUME"] + [h.get_label() for h in size_handles]
     )
+    # The legend is one list: a "PERFORMANCE TIER" header, the three tiers, a blank spacer,
+    # a "TOTAL PASS VOLUME" header and three example bubble sizes. The blank handles hold
+    # the header rows, which are styled in the loop below.
     header_rows = {0, 5}
     spacer_rows = {4}
 
@@ -545,6 +628,10 @@ def plot_pass_risk_execution(
     return fig
 
 
+# --------------------------------------------------------------------------- #
+# Team quadrant chart
+# --------------------------------------------------------------------------- #
+
 def plot_team_pass_quadrants(
     team_df: pd.DataFrame,
     min_passes: int = 0,
@@ -553,9 +640,17 @@ def plot_team_pass_quadrants(
     elite_quantile: float = 0.75,
     poor_quantile: float = 0.25,
     label_all: bool = True,
+    max_labels: Optional[int] = 30,
     legend_anchor: Tuple[float, float] = (1.02, 0.5),
 ) -> plt.Figure:
-    """Renders a quadrant scatter: Mean xP (risk) vs. CPOE (execution), bubble size = pass volume."""
+    """
+    Plots each team's mean xP (x) against its CPOE (y), sized by pass volume.
+
+    The dotted crosshairs at the league-average xP and CPOE split the chart into four
+    styles of play, from "aggressive & executing" (top-left) to "safe & struggling"
+    (bottom-right). With more than `max_labels` teams, only those furthest from the
+    average CPOE are labelled.
+    """
     df = _prepare_rate_frame(
         team_df, min_passes, name="team_df", id_col="team_name", entity="teams",
     )
@@ -570,6 +665,7 @@ def plot_team_pass_quadrants(
     league_xp = df['xP'].mean()
     league_cpoe = df['CPOE'].mean()
 
+    # Pad the x range a little, and keep the y range symmetric around CPOE = 0
     x_span = df['xP'].max() - df['xP'].min()
     x_pad = max(x_span * 0.16, 0.006)
     min_x, max_x = df['xP'].min() - x_pad, df['xP'].max() + x_pad
@@ -610,11 +706,13 @@ def plot_team_pass_quadrants(
                zorder=Z_GUIDES, alpha=0.8)
 
     def _pill(x, y, text, color, ha, va):
+        """Bold text in a rounded white box, used for the corner callouts."""
         return ax.text(x, y, text, fontsize=10.5, weight="bold", color=color,
                        ha=ha, va=va, zorder=Z_CALLOUTS, alpha=0.95,
                        bbox=dict(boxstyle="round,pad=0.35", facecolor="white",
                                  edgecolor=color, linewidth=1.2, alpha=0.92))
 
+    # One callout in each corner naming that quadrant
     dx = (max_x - min_x) * 0.012
     dy = (max_y - min_y) * 0.014
     pills = [
@@ -644,7 +742,12 @@ def plot_team_pass_quadrants(
     ax.set_ylim(min_y, max_y)
     fig.canvas.draw()  # finalize transforms so labels can start just above each bubble's edge
 
+    # Each label starts just above the edge of its bubble, so it's measured in pixels
+    # from the bubble's radius before adjustText spreads overlapping labels apart
     label_df = df if label_all else df[elite | poor]
+    if max_labels is not None and len(label_df) > max_labels:
+        # Too many teams to label legibly (multi-league runs): keep the ones furthest from the average
+        label_df = label_df.loc[(label_df['CPOE'] - league_cpoe).abs().nlargest(max_labels).index]
     texts = []
     for idx, row in label_df.iterrows():
         radius_px = np.sqrt(sizes.loc[idx]) / 2 * fig.dpi / 72
@@ -663,7 +766,7 @@ def plot_team_pass_quadrants(
 
     ax.set_xlabel('Mean Expected Pass Completion % (xP)  →  safer passes to the right',
                   fontsize=11.5, weight='bold', color=PALETTE["text_mid"], labelpad=12)
-    ax.set_ylabel('Completion Over Expectation (CPOE)', fontsize=11.5, weight='bold',
+    ax.set_ylabel('Completion Percentage Over Expected (CPOE)', fontsize=11.5, weight='bold',
                   color=PALETTE["text_mid"], labelpad=12)
 
     ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.0, decimals=0))
@@ -680,7 +783,7 @@ def plot_team_pass_quadrants(
     cx = (left + right) / 2
     fig.text(cx, 0.945, "Team Pass Risk vs. Execution", fontsize=24, weight="bold",
              color=PALETTE["text_dark"], ha="center")
-    fig.text(cx, 0.905, "Mean xP vs. Completion Over Expectation (CPOE) — who takes risk, who delivers",
+    fig.text(cx, 0.905, "Mean xP vs. Completion Percentage Over Expected (CPOE) — who takes risk, who delivers",
              fontsize=13, color=PALETTE["text_mid"], ha="center")
     fig.text(0.96, 0.945, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
              ha="right", weight="bold")
@@ -721,6 +824,9 @@ def plot_team_pass_quadrants(
         ["PERFORMANCE TIER"] + [h.get_label() for h in category_handles]
         + [""] + ["TOTAL PASS VOLUME"] + [h.get_label() for h in size_handles]
     )
+    # The legend is one list: a "PERFORMANCE TIER" header, the three tiers, a blank spacer,
+    # a "TOTAL PASS VOLUME" header and three example bubble sizes. The blank handles hold
+    # the header rows, which are styled in the loop below.
     header_rows = {0, 5}
     spacer_rows = {4}
 
@@ -746,12 +852,17 @@ def plot_team_pass_quadrants(
     return fig
 
 
+# --------------------------------------------------------------------------- #
+# Top player pass map
+# --------------------------------------------------------------------------- #
+
 PVA_REQUIRED_COLUMNS = ["player_name", "total_passes", "total_pva"]
 PASS_REQUIRED_COLUMNS = [
     "player_name", "start_x", "start_y", "end_x", "end_y",
     "pass_outcome", "xP",
 ]
 
+# Dark pitch theme for the pass map
 BG_COLOR = "#0f172a"
 LINE_COLOR = "#334155"
 TITLE_COLOR = "#f8fafc"
@@ -761,7 +872,7 @@ FAILED_COLOR = "#ef4444"
 
 
 def _prepare_pva(pva_df: pd.DataFrame) -> pd.DataFrame:
-    """Validate and clean the per-player PVA summary."""
+    """Validates the per-player summary and drops rows with missing values (with a warning)."""
     _check_columns(pva_df, PVA_REQUIRED_COLUMNS, "pva_df")
     pva_df = _to_numeric_strict(pva_df, ["total_passes", "total_pva"], "pva_df")
 
@@ -774,7 +885,7 @@ def _prepare_pva(pva_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _prepare_passes(passes_df: pd.DataFrame) -> pd.DataFrame:
-    """Validate columns, coerce dtypes and drop unusable rows."""
+    """Validates the per-pass data: numeric coordinates, xP in [0, 1] and a strictly 0/1 outcome."""
     _check_columns(passes_df, PASS_REQUIRED_COLUMNS, "passes_df")
     passes_df = passes_df.copy()
 
@@ -790,7 +901,7 @@ def _prepare_passes(passes_df: pd.DataFrame) -> pd.DataFrame:
     if passes_df.empty:
         raise ValueError("`passes_df` has no usable rows after removing rows with missing values.")
 
-    # Validation: pass outcome is strictly binary (1 = completed, 0 = incomplete/failed).
+    # The outcome must be strictly binary (1 = completed, 0 = failed); other values aren't guessed at
     invalid_outcome = ~passes_df["pass_outcome"].isin([0, 1])
     if invalid_outcome.any():
         bad_values = sorted(passes_df.loc[invalid_outcome, "pass_outcome"].unique().tolist())[:5]
@@ -808,7 +919,10 @@ def _prepare_passes(passes_df: pd.DataFrame) -> pd.DataFrame:
 def _select_top_player(
     pva_df: pd.DataFrame, passes_df: pd.DataFrame, min_passes: int
 ) -> tuple[str, float]:
-    """Return (player_name, total_pva) for the highest total_pva player."""
+    """
+    Returns (player_name, total_pva) for the player with the highest total PVA,
+    among players with at least `min_passes` passes who also appear in the pass data.
+    """
     if pva_df.duplicated(subset=["player_name"]).any():
         raise ValueError("pva_df must be a pre-aggregated per-player summary without duplicate player names.")
 
@@ -833,7 +947,13 @@ def plot_top_player_pass_map(
     min_passes: int = 300,
     figsize: tuple[float, float] = (13, 9),
 ) -> Figure:
-    """Plot every attempted pass of the top-PVA player on a StatsBomb pitch."""
+    """
+    Draws every pass attempted by the player with the highest total PVA.
+
+    Completed passes are green and failed passes red, on a StatsBomb pitch with play
+    going left to right. The subtitle compares the player's completion rate with their
+    mean xP and shows their total PVA.
+    """
     pva_data = _prepare_pva(pva_df)
     pass_data = _prepare_passes(passes_df)
 
@@ -844,6 +964,7 @@ def plot_top_player_pass_map(
 
     n_passes = len(player_df)
     summary_passes = float(pva_data.loc[pva_data["player_name"] == player_name, "total_passes"].iloc[0])
+    # The summary and the pass data should describe the same passes; flag it if they don't
     if n_passes != summary_passes:
         warnings.warn(
             f"{player_name}: `pva_df` reports {summary_passes:g} passes but `passes_df` has "
