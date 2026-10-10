@@ -176,13 +176,14 @@ def draw_leaderboard_table(
     player_df: pd.DataFrame,
     top_n: int = 10,
     min_passes: int = 300,
-    model_label: Optional[str] = None,
+    scope_label: Optional[str] = None,
 ) -> plt.Figure:
     """
     Renders a table of the `top_n` players with the highest total PVA, among players
     with at least `min_passes` passes. The top three rows are highlighted.
 
-    `model_label` (e.g. "Calibrated XGBoost") is shown in the subtitle when given.
+    `scope_label` (the league and season, e.g. "La Liga 2015/2016") is shown in the
+    subtitle when given.
 
     Columns: rank, player, passes, actual completion %, mean xP, CPOE and total PVA.
     """
@@ -276,8 +277,8 @@ def draw_leaderboard_table(
         ha='center', va='center', fontsize=20, weight='bold', color='#0f172a', fontname='DejaVu Sans'
     )
     subtitle = f'Minimum Threshold: {min_passes} Passes'
-    if model_label:
-        subtitle += f'  |  Model: {model_label}'
+    if scope_label:
+        subtitle = f'{scope_label}  |  {subtitle}'
     fig.text(
         0.5, 0.91,
         subtitle,
@@ -320,6 +321,11 @@ Z_SCATTER_FG = 4
 Z_LABELS = 6
 Z_CALLOUTS = 10
 Z_LEGEND = 20
+
+
+def _with_scope(subtitle: str, scope_label: Optional[str]) -> str:
+    """Prefixes a subtitle with the league and season it covers, when one is given."""
+    return f"{scope_label}  ·  {subtitle}" if scope_label else subtitle
 
 
 def shorten_player_name(full_name: str, name_overrides: Optional[Dict[str, str]] = None) -> str:
@@ -420,12 +426,14 @@ def plot_pass_risk_execution(
     label_poor_n: int = 3,
     label_average: bool = False,
     name_overrides: Optional[Dict[str, str]] = None,
-    legend_anchor: Tuple[float, float] = (0.985, 0.5),
+    legend_anchor: Tuple[float, float] = (1.02, 0.5),
     model_label: Optional[str] = None,
+    scope_label: Optional[str] = None,
 ) -> plt.Figure:
     """
     Plots each player's mean xP (x) against their actual completion % (y).
-    `model_label` (e.g. "Calibrated XGBoost") is named in the footnote when given.
+    `model_label` (e.g. "Calibrated XGBoost") is named in the footnote and `scope_label`
+    (e.g. "La Liga 2015/2016") in the subtitle when given.
 
     The dashed diagonal is "completed exactly as many passes as expected". Players above it
     beat the model, players below it fall short, and the vertical distance from the line
@@ -457,10 +465,12 @@ def plot_pass_risk_execution(
     sizes = _scaled_bubble_sizes(df['total_passes'])
 
     plt.rcParams['font.family'] = FONT
-    fig, ax = plt.subplots(figsize=(13, 8.8), dpi=300)
+    fig, ax = plt.subplots(figsize=(14, 8.8), dpi=300)
     fig.patch.set_facecolor(PALETTE["bg_figure"])
     ax.set_facecolor(PALETTE["bg_axes"])
-    fig.subplots_adjust(top=0.89, bottom=0.11, left=0.08, right=0.96)
+    # The axes stop at 74% of the width, leaving room for the legend on the right
+    left, right = 0.08, 0.74
+    fig.subplots_adjust(top=0.87, bottom=0.11, left=left, right=right)
 
     # Background shading: actual minus expected at every point of the chart, so the colour
     # itself shows CPOE (green above the diagonal, red below)
@@ -558,16 +568,17 @@ def plot_pass_risk_execution(
         ax.spines[side].set_color(PALETTE["spine"])
         ax.spines[side].set_linewidth(1.1)
 
-    fig.text(0.52, 0.97, "Pass Risk vs. Execution", fontsize=24, weight="bold",
+    cx = (left + right) / 2
+    fig.text(cx, 0.945, "Pass Risk vs. Execution", fontsize=24, weight="bold",
               color=PALETTE["text_dark"], ha="center")
-    fig.text(0.52, 0.935, "Completion Percentage Over Expected (CPOE) — who beats their model, and by how much",
+    fig.text(cx, 0.905, _with_scope("Completion Percentage Over Expected (CPOE) — who beats their model", scope_label),
               fontsize=13, color=PALETTE["text_mid"], ha="center")
-    fig.text(0.96, 0.97, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
+    fig.text(0.96, 0.945, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
               ha="right", weight="bold")
-    fig.text(0.96, 0.948, f"min. {min_passes} passes", fontsize=9.5, color=PALETTE["text_light"], ha="right")
+    fig.text(0.96, 0.922, f"min. {min_passes} passes", fontsize=9.5, color=PALETTE["text_light"], ha="right")
 
     model_note = f"Model: {model_label}  ·  " if model_label else ""
-    fig.text(0.08, 0.015,
+    fig.text(left, 0.015,
               f"Dashed line: y = x (expected completion)  ·  {model_note}"
               "bubble size ∝ total pass volume  ·  background shade ∝ CPOE",
               fontsize=9.5, color=PALETTE["text_light"], ha="left", style="italic")
@@ -608,10 +619,10 @@ def plot_pass_risk_execution(
 
     combo_legend = ax.legend(
         combo_handles, combo_labels,
-        loc='center right', bbox_to_anchor=legend_anchor,
+        loc='center left', bbox_to_anchor=legend_anchor,
         frameon=True, fancybox=True, framealpha=0.94,
         facecolor=PALETTE["legend_face"], edgecolor=PALETTE["spine"],
-        fontsize=10.5, handletextpad=0.9, labelspacing=0.75, borderpad=1.0,
+        fontsize=10, handletextpad=0.9, labelspacing=0.75, borderpad=1.0,
     )
     combo_legend.set_zorder(Z_LEGEND)
 
@@ -642,9 +653,11 @@ def plot_team_pass_quadrants(
     label_all: bool = True,
     max_labels: Optional[int] = 30,
     legend_anchor: Tuple[float, float] = (1.02, 0.5),
+    scope_label: Optional[str] = None,
 ) -> plt.Figure:
     """
     Plots each team's mean xP (x) against its CPOE (y), sized by pass volume.
+    `scope_label` (e.g. "La Liga 2015/2016") is shown in the subtitle when given.
 
     The dotted crosshairs at the league-average xP and CPOE split the chart into four
     styles of play, from "aggressive & executing" (top-left) to "safe & struggling"
@@ -783,7 +796,7 @@ def plot_team_pass_quadrants(
     cx = (left + right) / 2
     fig.text(cx, 0.945, "Team Pass Risk vs. Execution", fontsize=24, weight="bold",
              color=PALETTE["text_dark"], ha="center")
-    fig.text(cx, 0.905, "Mean xP vs. Completion Percentage Over Expected (CPOE) — who takes risk, who delivers",
+    fig.text(cx, 0.905, _with_scope("Mean xP vs. CPOE — who takes risk, who delivers", scope_label),
              fontsize=13, color=PALETTE["text_mid"], ha="center")
     fig.text(0.96, 0.945, f"n = {len(df)}", fontsize=11, color=PALETTE["text_light"],
              ha="right", weight="bold")
@@ -862,13 +875,14 @@ PASS_REQUIRED_COLUMNS = [
     "pass_outcome", "xP",
 ]
 
-# Dark pitch theme for the pass map
-BG_COLOR = "#0f172a"
-LINE_COLOR = "#334155"
+# Dark green pitch theme for the pass map. The completed-pass green leans towards yellow
+# (lime) so it stands out from the pitch instead of blending into it.
+BG_COLOR = "#0b3d20"
+LINE_COLOR = "#5f8f6e"
 TITLE_COLOR = "#f8fafc"
-SUBTITLE_COLOR = "#94a3b8"
-COMPLETE_COLOR = "#10b981"
-FAILED_COLOR = "#ef4444"
+SUBTITLE_COLOR = "#b7d3bf"
+COMPLETE_COLOR = "#7dff3a"
+FAILED_COLOR = "#ff3b3b"
 
 
 def _prepare_pva(pva_df: pd.DataFrame) -> pd.DataFrame:
@@ -946,13 +960,14 @@ def plot_top_player_pass_map(
     passes_df: pd.DataFrame,
     min_passes: int = 300,
     figsize: tuple[float, float] = (13, 9),
+    scope_label: Optional[str] = None,
 ) -> Figure:
     """
     Draws every pass attempted by the player with the highest total PVA.
 
     Completed passes are green and failed passes red, on a StatsBomb pitch with play
-    going left to right. The subtitle compares the player's completion rate with their
-    mean xP and shows their total PVA.
+    going left to right. The subtitle names the league and season (`scope_label`, when
+    given), compares the player's completion rate with their mean xP and shows their total PVA.
     """
     pva_data = _prepare_pva(pva_df)
     pass_data = _prepare_passes(passes_df)
@@ -996,14 +1011,14 @@ def plot_top_player_pass_map(
         pitch.arrows(
             completed["start_x"], completed["start_y"],
             completed["end_x"], completed["end_y"],
-            ax=ax, color=COMPLETE_COLOR, alpha=0.70,
+            ax=ax, color=COMPLETE_COLOR, alpha=0.80,
             width=1.6, headwidth=3, headlength=3, zorder=2,
         )
     if not failed.empty:
         pitch.arrows(
             failed["start_x"], failed["start_y"],
             failed["end_x"], failed["end_y"],
-            ax=ax, color=FAILED_COLOR, alpha=0.90,
+            ax=ax, color=FAILED_COLOR, alpha=0.95,
             width=1.8, headwidth=3, headlength=3, zorder=3,
         )
 
@@ -1011,7 +1026,7 @@ def plot_top_player_pass_map(
     cpoe_sign = "+" if cpoe >= 0 else "−"
 
     ax.text(
-        0.0, 1.11, f"{player_name} — Pass Map & Value Added (PVA)",
+        0.0, 1.11, f"{player_name} — Pass Map",
         transform=ax.transAxes, ha="left", va="bottom",
         fontsize=21, fontweight="bold", color=TITLE_COLOR,
     )
@@ -1019,6 +1034,8 @@ def plot_top_player_pass_map(
         f"{n_passes:,} passes  |  Completion {actual_pct:.1f}% vs. expected {expected_pct:.1f}%  |  "
         f"CPOE {cpoe_sign}{abs(cpoe):.1f} pp  |  Net PVA {pva_sign}{abs(total_pva):.2f}"
     )
+    if scope_label:
+        subtitle = f"{scope_label}  |  {subtitle}"
     ax.text(
         0.0, 1.05, subtitle,
         transform=ax.transAxes, ha="left", va="bottom",

@@ -4,14 +4,14 @@ xPass is an expected pass-completion model. It gives every pass a probability of
 
 ## Results
 
-These results come from a check run on **1. Bundesliga 2015/2016** (**30,934 passes**, **34 matches**). The test set is about 15% of the matches (6 matches, 5,614 passes), split by `match_id` so no match appears in both training and test. The scores below are for the **raw XGBoost** model, which was deployed because its test log-loss (0.4676) was lower than the calibrated model's (0.4677).
+The model is an XGBoost classifier with isotonic calibration. It was trained on **3,836,550 passes** from **3,961 StatsBomb match files**. The test set is about 15% of the matches (595 matches, 570,769 passes), split by `match_id` so no match appears in both training and test. The scores below are for the **calibrated** model, which was deployed because its test log-loss (0.4007) was lower than the raw XGBoost model's (0.4009).
 
 | Metric   | Hold-out score (85/15 split by match) |
 |----------|---------------------------------------|
-| ROC AUC  | 0.7998                                |
-| Log-loss | 0.4676                                |
-| Brier    | 0.1536                                |
-| Accuracy | 0.7720                                |
+| ROC AUC  | 0.8328                                |
+| Log-loss | 0.4007                                |
+| Brier    | 0.1266                                |
+| Accuracy | 0.8201                                |
 
 `pass_angle` was removed from the features because StatsBomb derives it from the pass end location, so it leaked the outcome.
 It was replaced by `angle_to_goal`, which only uses the start location, so the model can score a pass before it is played.
@@ -26,11 +26,23 @@ Read these numbers together with the [Limitations](#limitations) below.
 
 ![SHAP summary](docs/shap_diagram.png)
 
-**Example output.** A player leaderboard ranked by total PVA, and a pass map for the top player:
+**Example output.** The four charts the pipeline draws, here for the 2022 FIFA World Cup:
 
 ![Player leaderboard](docs/player_leaderboard.png)
 
+*Player leaderboard: the 10 players with the highest total PVA among those with at least 300 passes. Rodri tops it at +39.04, completing 94.8% of his passes against an expected 89.1%.*
+
+![Player pass risk vs. execution](docs/player_risk_execution.png)
+
+*Player pass risk vs. execution: each bubble is a player, with mean xP on the x-axis and actual completion % on the y-axis. Players above the dashed diagonal complete more passes than the model expects, and players further left attempt harder passes. Bubble size shows pass volume, and colour shows the CPOE tier.*
+
+![Team pass risk vs. execution](docs/team_pass_quadrants.png)
+
+*Team pass risk vs. execution: each bubble is a team, with mean xP on the x-axis and CPOE on the y-axis. The dotted tournament-average lines split teams into four styles, from aggressive and executing (top left) to safe and struggling (bottom right). Spain have the highest CPOE.*
+
 ![Top player pass map](docs/top_player_pass_map.png)
+
+*Pass map of the leaderboard's top player, Rodri: 679 passes, completed in green and failed in red, attacking left to right.*
 
 ## Limitations
 

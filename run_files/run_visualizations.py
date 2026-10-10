@@ -150,6 +150,36 @@ def match_ids_in_scope(league: str, season: str) -> set:
     return {os.path.splitext(os.path.basename(p))[0] for p in glob.glob(pattern, recursive=True)}
 
 
+def scope_of_matches(match_ids) -> tuple:
+    """
+    Works out the (league, season) that a set of match ids comes from, using the raw
+    folder each match file sits in. season is None when the matches span several seasons
+    of one league, and both are None when they span several leagues.
+    """
+    match_ids = {str(m) for m in match_ids}
+    folders = set()
+    for path in glob.glob(os.path.join(RAW_DIR, "*", "*", "*.json")):
+        if os.path.splitext(os.path.basename(path))[0] in match_ids:
+            season_dir = os.path.dirname(path)
+            folders.add((os.path.basename(os.path.dirname(season_dir)), os.path.basename(season_dir)))
+
+    leagues = {league for league, _ in folders}
+    if len(leagues) != 1:
+        return None, None
+    league = leagues.pop()
+    return league, (folders.pop()[1] if len(folders) == 1 else None)
+
+
+def scope_label(league: str, season: str):
+    """Chart label for a scope, e.g. "La Liga 2015/2016" or "La Liga · all seasons"; None without a league."""
+    if not league:
+        return None
+    if not season:
+        return f"{league} · all seasons"
+    # Season folders use "-" because "/" can't appear in a folder name
+    return f"{league} {season.replace('-', '/')}"
+
+
 def deployed_model_label(model_dir: str):
     """
     Returns which model version a training run deployed ("Calibrated XGBoost" or
@@ -268,6 +298,9 @@ def main():
         post_team_df = pd.read_csv(latest_post_team)
         console.info(f"Team analysis: {os.path.basename(latest_post_team)}")
 
+        # The dataset has no league / season column, so find them from the raw match folders
+        league, season = scope_of_matches(pre_df['match_id'].unique())
+
     console.success(f"Loaded {len(pre_df):,} passes · {len(post_player_df):,} players · {len(post_team_df):,} teams")
 
     n_matches = pre_df['match_id'].nunique()
@@ -281,16 +314,21 @@ def main():
     if min_passes < DEFAULT_MIN_PASSES:
         console.info(f"Minimum passes per player lowered to {min_passes} for this scope (normally {DEFAULT_MIN_PASSES}).")
 
+    # Shown in every chart's subtitle
+    chart_scope = scope_label(league, season)
+
     console.section("Drawing figures")
     console.info("Drawing 4 figures...")
 
-    fig_leaderboard_table = draw_leaderboard_table(post_player_df, min_passes=min_passes, model_label=model_label)
+    fig_leaderboard_table = draw_leaderboard_table(post_player_df, min_passes=min_passes, scope_label=chart_scope)
     console.success("Drew player leaderboard table")
-    fig_plot_pass_risk_execution = plot_pass_risk_execution(post_player_df, min_passes=min_passes, model_label=model_label)
+    fig_plot_pass_risk_execution = plot_pass_risk_execution(post_player_df, min_passes=min_passes, model_label=model_label,
+                                                            scope_label=chart_scope)
     console.success("Drew pass risk vs execution scatter")
-    fig_plot_top_player_pass_map = plot_top_player_pass_map(pva_df=post_player_df, passes_df=pre_df, min_passes=min_passes)
+    fig_plot_top_player_pass_map = plot_top_player_pass_map(pva_df=post_player_df, passes_df=pre_df, min_passes=min_passes,
+                                                            scope_label=chart_scope)
     console.success("Drew top player pass map")
-    fig_plot_team_pass_quadrants = plot_team_pass_quadrants(post_team_df)
+    fig_plot_team_pass_quadrants = plot_team_pass_quadrants(post_team_df, scope_label=chart_scope)
     console.success("Drew team pass quadrants")
 
     # Figures go in the model's "visuals" folder: .../model_<timestamp>/visuals
