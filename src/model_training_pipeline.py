@@ -2,10 +2,11 @@
 Training, evaluation and diagnostics for the xPass (expected pass completion) model.
 
 The model is an XGBoost classifier that predicts the probability that a pass is completed.
-Two versions are trained on the same 85% training split:
+Two versions are trained on the same 85% training split. The split is grouped by match,
+so no match has passes in both the training and the test set:
 
     raw          XGBoost on its own
-    calibrated   XGBoost wrapped in 5-fold, isotonic CalibratedClassifierCV, which
+    calibrated   XGBoost wrapped in 5-fold (grouped by match), isotonic CalibratedClassifierCV, which
                  adjusts the probabilities so that, say, passes given 0.8 are
                  completed about 80% of the time
 
@@ -14,6 +15,7 @@ saved. The diagnostics (reliability diagram and SHAP summary) go in a reports/ f
 next to the model.
 """
 import os
+import json
 import glob
 import sys
 import joblib
@@ -22,7 +24,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from xgboost import XGBClassifier
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, GroupKFold
 from sklearn.metrics import log_loss, brier_score_loss, roc_auc_score, accuracy_score
 
 from src.features import FEAT_TRUEBEST
@@ -46,6 +48,7 @@ def save_metrics_report(
         final_brier: float,
         final_rocauc: float,
         final_testaccuracy: float,
+        split_type: str,
         features: list = FEAT_TRUEBEST
 ):
     """
@@ -61,6 +64,8 @@ def save_metrics_report(
         "="*50,
         "", "",
         f"Features used: {features}",
+        f"Train/test split: {split_type}",
+        f"Deployed model type: {'calibrated' if is_calibrated_deployed else 'raw'}",
         "", "",
         "---Uncalibrated Baseline---",
         f"Test Accuracy: {raw_testaccuracy:.4f}",
@@ -68,7 +73,7 @@ def save_metrics_report(
         f"Brier Score: {raw_brier:.4f}",
         f"ROC AUC: {raw_rocauc:.4f}",
         "",
-        "---Calibrated (Isotonic, 5-Fold CV)---",
+        "---Calibrated (Isotonic, 5-Fold GroupKFold CV by match_id)---",
         f"Test Accuracy: {cal_testaccuracy:.4f}",
         f"Log-Loss: {cal_logloss:.4f}",
         f"Brier Score: {cal_brier:.4f}",
@@ -127,14 +132,6 @@ def fig_reliability_diagram(raw_cal_curve, cal_cal_curve, model_name, models_dir
         color = 'black',
         fontsize = 16,
         fontweight = 'bold'
-    )
-    ax.set_title(
-        f"Model Name: {model_name}",
-        color = 'black',
-        loc = 'center',
-        style = 'italic',
-        fontsize = 12,
-        pad = 10
     )
     ax.legend(loc = 'lower right', fontsize = 12)
 
@@ -252,7 +249,7 @@ def fig_shap_diagram(base_model: XGBClassifier, models_dir: str, X_sample: pd.Da
         "start_x": "Start Position (X)",
         "start_y": "Start Position (Y)",
         "dist_to_goal": "Distance to Goal",
-        "pass_angle": "Pass Angle",
+        "angle_to_goal": "Angle to Goal",
         "under_pressure": "Under Pressure",
         "period": "Match Period",
         "half_percentage": "Time in Half (%)",
@@ -296,15 +293,6 @@ def fig_shap_diagram(base_model: XGBClassifier, models_dir: str, X_sample: pd.Da
         y = 1.03
     )
 
-    plt.title(
-        f"Model Name: {model_name}",
-        color = 'black',
-        loc = 'center',
-        style = 'italic',
-        fontsize = 12,
-        pad = 10
-    )
-
     fig_name = "shap_diagram_" + model_name + ".png"
     fig_dir = os.path.join(models_dir, "reports", fig_name)
     os.makedirs(os.path.dirname(fig_dir), exist_ok = True)
@@ -319,6 +307,24 @@ def fig_shap_diagram(base_model: XGBClassifier, models_dir: str, X_sample: pd.Da
 
 
 # --- Training ---
+
+SPLIT_TYPE = "GroupShuffleSplit by match_id (test_size=0.15, random_state=42)"
+
+
+def grouped_train_test_split(df: pd.DataFrame, test_size: float = 0.15, random_state: int = 42):
+    """
+    Splits df into (train, test) row positions so that every match lands entirely in one
+    side. A random split by pass would put passes from the same match in both sets.
+    """
+    splitter = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state)
+    train_idx, test_idx = next(splitter.split(df, groups=df['match_id']))
+
+    train_matches = set(df['match_id'].iloc[train_idx])
+    test_matches = set(df['match_id'].iloc[test_idx])
+    assert train_matches.isdisjoint(test_matches), "A match_id appears in both train and test"
+
+    return train_idx, test_idx
+
 
 def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', models_dir: str = "./models", 
                        force_calibration: bool = False, features: list = FEAT_TRUEBEST, run_diagnostics: bool = True):
@@ -336,11 +342,12 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     X = df[features]
     y = df['pass_outcome']
 
-    # Hold out 15% for testing. Stratifying keeps the completed / failed ratio the same in
-    # both splits, and the fixed random_state makes runs reproducible.
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.15, random_state=42, stratify=y
-    )
+    # Hold out about 15% of the matches for testing. Whole matches go to one side, so the
+    # test set only contains games the model has never seen. random_state makes runs reproducible.
+    train_idx, test_idx = grouped_train_test_split(df, test_size=0.15, random_state=42)
+    X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+    y_train, y_test = y.iloc[train_idx], y.iloc[test_idx]
+    groups_train = df['match_id'].iloc[train_idx]
 
     console.listing(features, "Features")
 
@@ -362,8 +369,8 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
 
 
     # 2. Calibrated model: identical XGBoost settings, wrapped in 5-fold isotonic calibration.
-    #    Each fold trains on 4/5 of the training data and fits the calibration on the remaining
-    #    1/5, so the calibration never sees passes its model was trained on.
+    #    Each fold trains on 4/5 of the training matches and fits the calibration on the
+    #    remaining 1/5, so the calibration never sees matches its model was trained on.
     console.info("Training 5-fold cross-validated calibrated model (isotonic)...")
 
     xgb_base_for_cal = XGBClassifier(
@@ -380,7 +387,7 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     calibrated_model = CalibratedClassifierCV(
         estimator = xgb_base_for_cal,
         method = 'isotonic',
-        cv = 5
+        cv = list(GroupKFold(n_splits=5).split(X_train, y_train, groups=groups_train))
     )
 
     calibrated_model.fit(X_train, y_train)
@@ -417,6 +424,12 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
     # 4. Keep the calibrated model only if it has a strictly lower test log-loss (or is forced)
     os.makedirs(models_dir, exist_ok=True)
     artifact_path = os.path.join(models_dir, model_name + '.joblib')
+
+    # The exact feature columns, in order, that the saved model expects
+    feature_list_path = os.path.join(models_dir, 'feature_list.json')
+    with open(feature_list_path, 'w') as f:
+        json.dump(list(features), f, indent=2)
+    console.success(f"Saved feature list: {os.path.basename(feature_list_path)}")
 
     if cal_logloss < raw_logloss or force_calibration:
         console.section("Deployment decision")
@@ -466,6 +479,8 @@ def run_model_training(df: pd.DataFrame, model_name: str = 'xgb_model_draft', mo
         final_brier=final_brier,
         final_rocauc=final_rocauc,
         final_testaccuracy=final_testaccuracy,
+        split_type=SPLIT_TYPE,
+        features=features,
     )
 
 

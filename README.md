@@ -1,16 +1,20 @@
 # xPass: Expected Pass Completion
 
-xPass is an expected pass-completion model. It gives every pass a probability of being completed (xP), based on where the pass starts, its angle, its distance to goal, its height, the body part used, the play pattern and whether the passer is under pressure. Those per-pass scores are then added up for each player and each team as **Pass Value Added (PVA)**, which is the actual outcome (1 = completed, 0 = failed) minus xP, and **Completion Percentage Over Expected (CPOE)**, which is the actual completion rate minus the expected completion rate. A player who completes difficult passes builds up positive PVA and CPOE. A player who misses easy ones builds up negative values.
+xPass is an expected pass-completion model. It gives every pass a probability of being completed (xP), based on where the pass starts, its angle and distance to goal, its height, the body part used, the play pattern and whether the passer is under pressure. Those per-pass scores are then added up for each player and each team as **Pass Value Added (PVA)**, which is the actual outcome (1 = completed, 0 = failed) minus xP, and **Completion Percentage Over Expected (CPOE)**, which is the actual completion rate minus the expected completion rate. A player who completes difficult passes builds up positive PVA and CPOE. A player who misses easy ones builds up negative values.
 
 ## Results
 
-The model is an XGBoost classifier with isotonic calibration. It was trained on **3,836,550 passes** from **3,961 StatsBomb match files** and scored on a held-out test set.
+These results come from a check run on **1. Bundesliga 2015/2016** (**30,934 passes**, **34 matches**). The test set is about 15% of the matches (6 matches, 5,614 passes), split by `match_id` so no match appears in both training and test. The scores below are for the **raw XGBoost** model, which was deployed because its test log-loss (0.4676) was lower than the calibrated model's (0.4677).
 
-| Metric   | Hold-out score (random 85/15 split by pass) |
-|----------|---------------------------------------------|
-| ROC AUC  | 0.8748                                      |
-| Log-loss | 0.3543                                      |
-| Brier    | 0.1118                                      |
+| Metric   | Hold-out score (85/15 split by match) |
+|----------|---------------------------------------|
+| ROC AUC  | 0.7998                                |
+| Log-loss | 0.4676                                |
+| Brier    | 0.1536                                |
+| Accuracy | 0.7720                                |
+
+`pass_angle` was removed from the features because StatsBomb derives it from the pass end location, so it leaked the outcome.
+It was replaced by `angle_to_goal`, which only uses the start location, so the model can score a pass before it is played.
 
 Read these numbers together with the [Limitations](#limitations) below.
 
@@ -30,8 +34,6 @@ Read these numbers together with the [Limitations](#limitations) below.
 
 ## Limitations
 
-- **The test split is by pass, not by match.** The 85/15 hold-out is a random, stratified split of individual passes. Passes from the same match, and the same team and players, therefore appear in both the training set and the test set. A split by match (or by season) would give a stricter estimate of performance on unseen games.
-- **`pass_angle` partly encodes the outcome for out-of-play passes.** The angle is taken from StatsBomb's pass data, which is derived from `end_location`. For a pass that goes out of play, `end_location` records where the ball went, not where the intended receiver was. For those passes the feature carries some information about the result.
 - **`is_progressive` is an approximation.** It is computed only from the pass length and whether the pass starts and ends in the own half or the opponent's half, and not from distance gained towards goal. It is part of the processed dataset but is not one of the model's features.
 - **Player and team PVA/CPOE are mostly in-sample.** The pipeline scores the same dataset the model was trained on, so about 85% of the passes behind PVA, CPOE, the leaderboard and the pass map were seen during training. This pulls completions and misses slightly towards what the model expected, so PVA and CPOE sit a little closer to zero than truly out-of-sample values would. The effect is larger on small, single-season runs. To score unseen passes, point step 4 at a different dataset with `--dataset`.
 
@@ -43,7 +45,7 @@ The model uses the following 17 features, defined in [`src/features.py`](src/fea
 |---|---------|-------|
 | 1 | `start_x` | Location |
 | 2 | `start_y` | Location |
-| 3 | `pass_angle` | Geometry |
+| 3 | `angle_to_goal` | Geometry |
 | 4 | `dist_to_goal` | Geometry |
 | 5 | `height_Low Pass` | Pass height |
 | 6 | `height_High Pass` | Pass height |

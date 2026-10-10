@@ -9,6 +9,10 @@ import os
 import pandas as pd
 import numpy as np
 
+def angle_to_goal(start_x, start_y):
+    """Angle (radians) of the vector from the pass start point to the goal centre (120, 40)."""
+    return np.arctan2(40 - start_y, 120 - start_x)
+
 def process_match_json(file_path):
     """
     Reads a single StatsBomb match file and returns its passes as a DataFrame.
@@ -122,6 +126,9 @@ def process_match_json(file_path):
     # Straight-line distance from where the pass starts to the centre of the opponent's goal at (120, 40)
     df_pass['dist_to_goal'] = np.sqrt((120 - df_pass['start_x'])**2 + (40 - df_pass['start_y'])**2)
 
+    # Direction from the start point to the goal; unlike pass_angle it doesn't depend on where the pass ended
+    df_pass['angle_to_goal'] = angle_to_goal(df_pass['start_x'], df_pass['start_y'])
+
     # --- Progressive passes ---
     # Based on Wyscout's definition, where a pass is progressive if it moves the ball at least
     #   30 m closer to goal when it starts and ends in the team's own half,
@@ -191,7 +198,7 @@ def process_match_json(file_path):
     feature_cols = [
         'period', 'half_percentage', 'net_score', 'under_pressure',
         'start_x', 'start_y', 'end_x', 'end_y',
-        'pass_angle', 'pass_length', 'dist_to_goal',
+        'pass_angle', 'pass_length', 'dist_to_goal', 'angle_to_goal',
         'is_progressive',
         'height_Low Pass', 'height_High Pass',
         'body_part_Foot', 'body_part_Head', 'body_part_Keeper Arm',

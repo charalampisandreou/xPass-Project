@@ -9,6 +9,7 @@ Every run gets its own timestamped folder, so earlier models are never overwritt
 
     models/final/model_<timestamp>/
         xpass_production_<timestamp>.joblib     the trained model
+        feature_list.json                       the feature columns, in order, the model expects
         reports/                                metrics report, reliability and SHAP diagrams
 
 Usage:

@@ -9,7 +9,7 @@ body part or play pattern without its own column (e.g. "From Counter") for the o
 FEAT_TRUEBEST = [
     'start_x',
     'start_y',
-    'pass_angle',
+    'angle_to_goal',
     'dist_to_goal',
     'height_Low Pass',
     'height_High Pass',

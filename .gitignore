@@ -19,6 +19,7 @@
 !/run_all.py
 !/run_files/
 !/src/
+!/tests/
 !/docs/
 
 # Local-only content stays out by default:
